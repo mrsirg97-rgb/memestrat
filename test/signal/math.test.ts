@@ -11,6 +11,7 @@ import {
   checkConfirmation,
   generateSignal,
   buildSignalResult,
+  ZSCORE_EPSILON,
 } from '../../src/signal/math.js';
 import type { Bar } from '../../src/types/market.js';
 import { DEFAULT_CONFIG } from '../../src/types/config.js';
@@ -85,8 +86,8 @@ describe('zScore', () => {
     expect(zScore(98, 100, 1)).toBe(-2);
   });
 
-  it('returns 0 when ESTD is 0', () => {
-    expect(zScore(105, 100, 0)).toBe(0);
+  it('returns undefined when ESTD is 0 (fail closed)', () => {
+    expect(zScore(105, 100, 0)).toBeUndefined();
   });
 });
 
@@ -152,8 +153,8 @@ describe('computeIndicators', () => {
 
     expect(result.shortEma).toBe(100); // first bar, EMA = price
     expect(result.longEma).toBe(100);
-    expect(result.shortZ).toBe(0); // no deviation on first bar
-    expect(result.longZ).toBe(0);
+    expect(result.shortZ).toBeUndefined(); // no ESTD history on first bar → undefined
+    expect(result.longZ).toBeUndefined();
     expect(result.regime).toBe('RANGING'); // no price history
   });
 
@@ -324,5 +325,280 @@ describe('buildSignalResult', () => {
     expect(result.confirmationFailures).toHaveLength(0);
     expect(result.timestamp).toBe(bar.timestamp);
     expect(result.indicators).toBe(indicators);
+  });
+});
+
+// ---- FIX 2: Division-by-zero guards, fail closed ----
+
+describe('zScore ESTD-below-epsilon guard', () => {
+  it('returns undefined when ESTD is exactly 0', () => {
+    expect(zScore(105, 100, 0)).toBeUndefined();
+  });
+
+  it('returns undefined when ESTD < epsilon (flat pre-pump bars)', () => {
+    expect(zScore(105, 100, ZSCORE_EPSILON / 2)).toBeUndefined();
+  });
+
+  it('returns defined z when ESTD >= epsilon', () => {
+    const result = zScore(105, 100, ZSCORE_EPSILON);
+    expect(result).toBeDefined();
+    expect(typeof result).toBe('number');
+  });
+
+  it('returns correct z when ESTD is well above epsilon', () => {
+    expect(zScore(105, 100, 2.5)).toBe(2);
+  });
+
+  it('returns undefined for negative deviation with zero ESTD', () => {
+    expect(zScore(95, 100, 0)).toBeUndefined();
+  });
+});
+
+describe('classifyBand with undefined z', () => {
+  const thresholds = DEFAULT_CONFIG.zscore;
+
+  it('returns undefined when z is undefined', () => {
+    expect(classifyBand(undefined, thresholds)).toBeUndefined();
+  });
+
+  it('still classifies normally when z is defined', () => {
+    expect(classifyBand(2, thresholds)).toBe('overbought');
+    expect(classifyBand(1, thresholds)).toBe('rich');
+    expect(classifyBand(-1, thresholds)).toBe('cheap');
+    expect(classifyBand(-2, thresholds)).toBe('oversold');
+  });
+});
+
+describe('warmup period — insufficient bars', () => {
+  it('classifyRegime returns RANGING when no price history', () => {
+    expect(classifyRegime(100, undefined, DEFAULT_CONFIG.regime)).toBe('RANGING');
+  });
+
+  it('computeIndicators returns undefined z on first bar (no ESTD history)', () => {
+    const bar = makeBar(100);
+    const result = computeIndicators(
+      bar,
+      undefined, undefined, undefined, undefined,
+      undefined, undefined,
+      undefined, // priceAtWindowStart
+      10,
+      DEFAULT_CONFIG.ema,
+      DEFAULT_CONFIG.regime,
+      DEFAULT_CONFIG.zscore,
+    );
+    expect(result.shortZ).toBeUndefined();
+    expect(result.longZ).toBeUndefined();
+    expect(result.regime).toBe('RANGING');
+  });
+
+  it('generateSignal returns NOOP when z is undefined (warmup)', () => {
+    // UPTREND regime but undefined z → fail closed
+    expect(generateSignal(100, 'UPTREND', undefined, undefined, 0.1, true, false)).toBe('NOOP');
+    // RANGING regime with ranging enabled but undefined z → fail closed
+    expect(generateSignal(100, 'RANGING', undefined, undefined, 0.1, true, true)).toBe('NOOP');
+  });
+});
+
+describe('ESTD-below-epsilon ⇒ NOOP', () => {
+  it('zScore returns undefined for tiny ESTD', () => {
+    const tinyEstd = 1e-15; // far below epsilon
+    expect(zScore(100.001, 100, tinyEstd)).toBeUndefined();
+  });
+
+  it('computeIndicators propagates undefined z when ESTD < epsilon', () => {
+    const bar = makeBar(100);
+    // Simulate a state where ESTD has converged to near-zero (flat price)
+    const result = computeIndicators(
+      bar,
+      100, 100, // EMAs at price
+      1e-15, 1e-15, // ESTDs near zero
+      undefined, undefined,
+      100, // priceAtWindowStart
+      10,
+      DEFAULT_CONFIG.ema,
+      DEFAULT_CONFIG.regime,
+      DEFAULT_CONFIG.zscore,
+    );
+    expect(result.shortZ).toBeUndefined();
+    expect(result.longZ).toBeUndefined();
+  });
+
+  it('signal degrades to NOOP when shortZ undefined in UPTREND', () => {
+    const signal = generateSignal(100, 'UPTREND', undefined, 1.0, 0.5, true, false);
+    expect(signal).toBe('NOOP');
+  });
+
+  it('signal degrades to NOOP when either z undefined in RANGING', () => {
+    expect(generateSignal(100, 'RANGING', undefined, -2.0, 0, true, true)).toBe('NOOP');
+    expect(generateSignal(100, 'RANGING', -2.0, undefined, 0, true, true)).toBe('NOOP');
+  });
+});
+
+describe('ROC denominator guard', () => {
+  it('returns RANGING when priceAtWindowStart is 0', () => {
+    expect(classifyRegime(100, 0, DEFAULT_CONFIG.regime)).toBe('RANGING');
+  });
+
+  it('returns RANGING when priceAtWindowStart is near-zero', () => {
+    expect(classifyRegime(100, 1e-10, DEFAULT_CONFIG.regime)).toBe('RANGING');
+  });
+
+  it('returns RANGING when priceAtWindowStart is undefined', () => {
+    expect(classifyRegime(100, undefined, DEFAULT_CONFIG.regime)).toBe('RANGING');
+  });
+
+  it('classifies normally when priceAtWindowStart is well above epsilon', () => {
+    expect(classifyRegime(160, 100, DEFAULT_CONFIG.regime)).toBe('UPTREND');
+    expect(classifyRegime(40, 100, DEFAULT_CONFIG.regime)).toBe('DOWNTREND');
+  });
+});
+
+describe('regime boundary conditions at ±T', () => {
+  const thresholds = DEFAULT_CONFIG.regime; // tUp = 0.5, tDown = 0.5
+
+  it('ROC exactly at +T_up → RANGING (strictly greater required)', () => {
+    // roc = (150 - 100) / 100 = 0.5 = T_up exactly → RANGING
+    expect(classifyRegime(150, 100, thresholds)).toBe('RANGING');
+  });
+
+  it('ROC exactly at -T_down → RANGING (strictly less required)', () => {
+    // roc = (50 - 100) / 100 = -0.5 = -T_down exactly → RANGING
+    expect(classifyRegime(50, 100, thresholds)).toBe('RANGING');
+  });
+
+  it('ROC just above +T_up → UPTREND', () => {
+    // roc = 0.5001 > 0.5
+    expect(classifyRegime(150.01, 100, thresholds)).toBe('UPTREND');
+  });
+
+  it('ROC just below -T_down → DOWNTREND', () => {
+    // roc = -0.5001 < -0.5
+    expect(classifyRegime(49.99, 100, thresholds)).toBe('DOWNTREND');
+  });
+
+  it('ROC at 0 → RANGING', () => {
+    expect(classifyRegime(100, 100, thresholds)).toBe('RANGING');
+  });
+
+  it('ROC slightly positive but below T_up → RANGING', () => {
+    expect(classifyRegime(110, 100, thresholds)).toBe('RANGING');
+  });
+
+  it('ROC slightly negative but above -T_down → RANGING', () => {
+    expect(classifyRegime(90, 100, thresholds)).toBe('RANGING');
+  });
+});
+
+// ---- FIX 4: Property tests for invariants ----
+
+describe('invariant: generateSignal always returns a valid Signal', () => {
+  const validSignals = ['BUY', 'SELL', 'NOOP'] as const;
+
+  it.each([
+    ['UPTREND', 0, 0, 0, true, false],
+    ['UPTREND', -1, 0, 0.1, true, false],
+    ['UPTREND', 2, 1.5, 0.1, true, false],
+    ['UPTREND', undefined, undefined, 0.1, true, false],
+    ['DOWNTREND', -2, -1, -0.5, true, false],
+    ['DOWNTREND', 2, 1, 0.5, true, false],
+    ['DOWNTREND', undefined, undefined, 0, false, false],
+    ['RANGING', -2, -1, 0, true, true],
+    ['RANGING', 2, 1, 0, true, true],
+    ['RANGING', undefined, undefined, 0, true, true],
+    ['RANGING', -2, -1, 0, true, false],
+  ])('(%s, shortZ=%s, longZ=%s, shortSlope=%s, confirmed=%s, ranging=%s) → valid signal',
+    (regime, shortZ, longZ, shortSlope, confirmed, ranging) => {
+      const signal = generateSignal(100, regime, shortZ, longZ, shortSlope, confirmed, ranging);
+      expect(validSignals).toContain(signal);
+    },
+  );
+});
+
+describe('invariant: DOWNTREND always → NOOP regardless of z/slope', () => {
+  it.each([
+    [-2, -1, -0.5, true],
+    [2, 1, 0.5, true],
+    [0, 0, 0, false],
+    [undefined, undefined, 0, true],
+    [100, -100, 1000, true],
+  ])('shortZ=%s, longZ=%s, shortSlope=%s, confirmed=%s → NOOP',
+    (shortZ, longZ, shortSlope, confirmed) => {
+      expect(generateSignal(100, 'DOWNTREND', shortZ, longZ, shortSlope, confirmed, false)).toBe('NOOP');
+    },
+  );
+});
+
+describe('invariant: classifyRegime always returns a valid Regime', () => {
+  const validRegimes = ['UPTREND', 'DOWNTREND', 'RANGING'] as const;
+
+  it.each([
+    [0, 100],
+    [100, 100],
+    [200, 100],
+    [50, 100],
+    [0.001, 100],
+    [1000, 100],
+    [100, 0],
+    [100, 0.001],
+    [100, undefined as any],
+  ])('currentPrice=%s, priceAtWindowStart=%s → valid regime',
+    (currentPrice, priceAtWindowStart) => {
+      const regime = classifyRegime(currentPrice, priceAtWindowStart, DEFAULT_CONFIG.regime);
+      expect(validRegimes).toContain(regime);
+    },
+  );
+});
+
+describe('invariant: zScore magnitude relates to deviation', () => {
+  it('when z is defined, |z| * estd ≈ |deviation|', () => {
+    const price = 105;
+    const emaVal = 100;
+    const estdVal = 2.5;
+    const z = zScore(price, emaVal, estdVal);
+
+    expect(z).toBeDefined();
+    if (z !== undefined) {
+      const dev = Math.abs(deviation(price, emaVal));
+      const reconstructed = Math.abs(z) * estdVal;
+      expect(reconstructed).toBeCloseTo(dev, 10);
+    }
+  });
+
+  it('negative deviation produces negative z', () => {
+    const z = zScore(95, 100, 2.5);
+    expect(z).toBeDefined();
+    expect(z).toBeLessThan(0);
+  });
+
+  it('positive deviation produces positive z', () => {
+    const z = zScore(105, 100, 2.5);
+    expect(z).toBeDefined();
+    expect(z).toBeGreaterThan(0);
+  });
+
+  it('zero deviation produces z = 0', () => {
+    const z = zScore(100, 100, 2.5);
+    expect(z).toBe(0);
+  });
+});
+
+describe('invariant: UPTREND only fires BUY on pullback with positive slope', () => {
+  it('BUY requires shortZ <= 0 AND shortSlope > 0 AND confirmed', () => {
+    // All conditions met
+    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0.1, true, false)).toBe('BUY');
+
+    // shortZ > 0 → NOOP
+    expect(generateSignal(100, 'UPTREND', 0.5, 0.5, 0.1, true, false)).toBe('NOOP');
+
+    // shortSlope <= 0 → NOOP
+    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0, true, false)).toBe('NOOP');
+    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, -0.1, true, false)).toBe('NOOP');
+
+    // unconfirmed → NOOP
+    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0.1, false, false)).toBe('NOOP');
+  });
+
+  it('does NOT sell on overbought in UPTREND (trend working)', () => {
+    expect(generateSignal(100, 'UPTREND', 3, 2, 0.1, true, false)).toBe('NOOP');
   });
 });
