@@ -107,7 +107,11 @@ regime =
 ```
 
 The threshold `T_up` / `T_down` is a fraction (default 0.5 = 50% move over the window).
+The window length is configurable via `config.regime.windowBars` (default: 10 bars).
 A 50%+ move in 10 bars (2.5 min at 15s bars) = confirmed pump. A 50%+ drop = confirmed dump.
+
+**Contract:** `priceAtWindowStart` = the close price `config.regime.windowBars` bars ago.
+The caller is responsible for maintaining a price history buffer and looking back `windowBars` positions.
 
 **Why ROC, not ESTD-normalized slope?** ESTD-normalized regime detection assumes a stationary
 dispersion baseline — valid for established assets (the strategy's origin) but not for memecoins,

@@ -135,6 +135,34 @@ describe('classifyRegime', () => {
     expect(classifyRegime(120, undefined, thresholds)).toBe('RANGING');
     expect(classifyRegime(120, 0, thresholds)).toBe('RANGING');
   });
+
+  // FINDING 1: windowBars is a first-class config field
+  it('RegimeThresholds has a windowBars field with default 10', () => {
+    expect(DEFAULT_CONFIG.regime.windowBars).toBe(10);
+  });
+
+  it('computeIndicators sources windowBars from config (not a separate arg)', () => {
+    // Simulate a price history where the ROC depends on the window length.
+    // Price was 100 at bar 0, now 155 at bar 30 (55% up from bar 0).
+    // With windowBars=10, priceAtWindowStart = price at bar 20.
+    // If price at bar 20 was 130, ROC = (155-130)/130 = 19.2% → RANGING.
+    // If price at bar 20 was 100, ROC = (155-100)/100 = 55% → UPTREND.
+    // The key test: computeIndicators must use config.regime.windowBars to determine
+    // which historical price to look back to.
+    const bar = makeBar(155);
+    const result = computeIndicators(
+      bar,
+      undefined, undefined, undefined, undefined,
+      undefined, undefined,
+      100, // priceAtWindowStart — 10 bars ago
+      {
+        ...DEFAULT_CONFIG,
+        regime: { ...DEFAULT_CONFIG.regime, windowBars: 10 },
+      },
+    );
+    // 55% ROC > 50% threshold → UPTREND
+    expect(result.regime).toBe('UPTREND');
+  });
 });
 
 describe('computeIndicators', () => {
@@ -145,10 +173,7 @@ describe('computeIndicators', () => {
       undefined, undefined, undefined, undefined,
       undefined, undefined,
       undefined, // priceAtWindowStart
-      10,
-      DEFAULT_CONFIG.ema,
-      DEFAULT_CONFIG.regime,
-      DEFAULT_CONFIG.zscore,
+      DEFAULT_CONFIG,
     );
 
     expect(result.shortEma).toBe(100); // first bar, EMA = price
@@ -159,16 +184,12 @@ describe('computeIndicators', () => {
   });
 
   it('detects uptrend after a sharp price jump (memecoin pump pattern)', () => {
-    const emaWindows = DEFAULT_CONFIG.ema;
-    const regimeThresholds = DEFAULT_CONFIG.regime;
-    const zscoreThresholds = DEFAULT_CONFIG.zscore;
-
     // Simulate a flat period followed by a sharp pump (the memecoin pattern).
     let shortEma: number | undefined;
     let longEma: number | undefined;
     let shortEstd: number | undefined;
     let longEstd: number | undefined;
-    const slopeWindow = 10;
+    const slopeWindow = DEFAULT_CONFIG.regime.windowBars;
     const longEmaHistory: number[] = [];
     const priceHistory: number[] = [];
 
@@ -185,8 +206,7 @@ describe('computeIndicators', () => {
         shortEma, longEma, shortEstd, longEstd,
         undefined, longSlopeStart,
         priceAtWindowStart,
-        slopeWindow,
-        emaWindows, regimeThresholds, zscoreThresholds,
+        DEFAULT_CONFIG,
       );
 
       shortEma = result.shortEma;
@@ -312,10 +332,7 @@ describe('buildSignalResult', () => {
       undefined, undefined, undefined, undefined,
       undefined, undefined,
       undefined, // priceAtWindowStart
-      10,
-      DEFAULT_CONFIG.ema,
-      DEFAULT_CONFIG.regime,
-      DEFAULT_CONFIG.zscore,
+      DEFAULT_CONFIG,
     );
 
     const result = buildSignalResult(bar, indicators, true, [], false);
@@ -381,10 +398,7 @@ describe('warmup period — insufficient bars', () => {
       undefined, undefined, undefined, undefined,
       undefined, undefined,
       undefined, // priceAtWindowStart
-      10,
-      DEFAULT_CONFIG.ema,
-      DEFAULT_CONFIG.regime,
-      DEFAULT_CONFIG.zscore,
+      DEFAULT_CONFIG,
     );
     expect(result.shortZ).toBeUndefined();
     expect(result.longZ).toBeUndefined();
@@ -414,10 +428,7 @@ describe('ESTD-below-epsilon ⇒ NOOP', () => {
       1e-15, 1e-15, // ESTDs near zero
       undefined, undefined,
       100, // priceAtWindowStart
-      10,
-      DEFAULT_CONFIG.ema,
-      DEFAULT_CONFIG.regime,
-      DEFAULT_CONFIG.zscore,
+      DEFAULT_CONFIG,
     );
     expect(result.shortZ).toBeUndefined();
     expect(result.longZ).toBeUndefined();
@@ -579,6 +590,34 @@ describe('invariant: zScore magnitude relates to deviation', () => {
   it('zero deviation produces z = 0', () => {
     const z = zScore(100, 100, 2.5);
     expect(z).toBe(0);
+  });
+});
+
+describe('regime windowBars is sourced from config (FINDING 1)', () => {
+  it('classifyRegime uses windowBars from thresholds to determine ROC lookback', () => {
+    // With windowBars = 10, priceAtWindowStart is the close 10 bars ago.
+    // A 60% move over 10 bars should classify as UPTREND with tUp = 0.5.
+    const thresholds = { tUp: 0.5, tDown: 0.5, windowBars: 10 };
+    expect(classifyRegime(160, 100, thresholds)).toBe('UPTREND');
+  });
+
+  it('different windowBars changes the ROC interpretation', () => {
+    // Same price move, but with a shorter window the ROC is more significant.
+    // With windowBars = 5, a 30% move is still under tUp = 0.5 → RANGING.
+    const thresholds = { tUp: 0.5, tDown: 0.5, windowBars: 5 };
+    expect(classifyRegime(130, 100, thresholds)).toBe('RANGING');
+  });
+
+  it('computeIndicators passes regime config with windowBars', () => {
+    const bar = makeBar(100);
+    const result = computeIndicators(
+      bar,
+      undefined, undefined, undefined, undefined,
+      undefined, undefined,
+      undefined,
+      DEFAULT_CONFIG,
+    );
+    expect(result.regime).toBe('RANGING');
   });
 });
 

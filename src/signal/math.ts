@@ -1,10 +1,10 @@
 /** Pure signal math — inputs to outputs, zero I/O or state. */
 import type { Bar, LiquiditySnapshot } from '../types/market.js';
 import type {
-  EmaWindows,
-  RegimeThresholds,
-  ZScoreThresholds,
   ConfirmationConfig,
+  RegimeThresholds,
+  StrategyConfig,
+  ZScoreThresholds,
 } from '../types/config.js';
 import type { Indicators, Regime, Signal, SignalResult, ZBand } from '../types/signal.js';
 
@@ -87,8 +87,11 @@ const ROC_EPSILON = 1e-9;
 /**
  * Classify regime from rate-of-change over the slope window.
  * Uses price ROC (not EMA slope) for faster regime detection — critical for memecoins
- * where EMA slope is a lagging instrument. A 20%+ move in the window = trend.
+ * where EMA slope is a lagging instrument. A 50%+ move in the window = trend.
  * See TASK.md: "consider a faster regime proxy (EMA cross, rate-of-change percentile)".
+ *
+ * Contract: priceAtWindowStart = the close price `windowBars` bars ago,
+ * where `windowBars` is sourced from `thresholds.windowBars` (default: 10).
  */
 export function classifyRegime(
   currentPrice: number,
@@ -107,6 +110,8 @@ export function classifyRegime(
 /**
  * Compute full indicator set from a bar and previous state.
  * Uses a rolling buffer approach: caller maintains EMA/ESTD/slope state + price history.
+ * `windowBars` is sourced from `config.regime.windowBars` (default: 10).
+ * Contract: `priceAtWindowStart` = the close price `config.regime.windowBars` bars ago.
  */
 export function computeIndicators(
   bar: Bar,
@@ -117,17 +122,15 @@ export function computeIndicators(
   shortSlopeStartEma: number | undefined,
   longSlopeStartEma: number | undefined,
   priceAtWindowStart: number | undefined,
-  slopeWindowBars: number,
-  emaWindows: EmaWindows,
-  regimeThresholds: RegimeThresholds,
-  zscoreThresholds: ZScoreThresholds,
+  config: StrategyConfig,
 ): Indicators {
-  const shortEma = ema(bar.close, prevShortEma, emaWindows.short);
-  const longEma = ema(bar.close, prevLongEma, emaWindows.long);
-  const shortEstd = estd(bar.close, shortEma, prevShortEstd, emaWindows.short);
-  const longEstd = estd(bar.close, longEma, prevLongEstd, emaWindows.long);
+  const shortEma = ema(bar.close, prevShortEma, config.ema.short);
+  const longEma = ema(bar.close, prevLongEma, config.ema.long);
+  const shortEstd = estd(bar.close, shortEma, prevShortEstd, config.ema.short);
+  const longEstd = estd(bar.close, longEma, prevLongEstd, config.ema.long);
 
-  // Slope: rate of change over the slope window
+  // Slope: rate of change over the slope window (uses regime.windowBars)
+  const slopeWindowBars = config.regime.windowBars;
   const shortSlope = shortSlopeStartEma !== undefined
     ? slope(shortEma, shortSlopeStartEma, slopeWindowBars)
     : 0;
@@ -137,11 +140,11 @@ export function computeIndicators(
 
   const shortZ = zScore(bar.close, shortEma, shortEstd);
   const longZ = zScore(bar.close, longEma, longEstd);
-  const shortBand = classifyBand(shortZ, zscoreThresholds);
-  const longBand = classifyBand(longZ, zscoreThresholds);
+  const shortBand = classifyBand(shortZ, config.zscore);
+  const longBand = classifyBand(longZ, config.zscore);
 
   // Regime: rate-of-change over the slope window (faster than EMA slope)
-  const regime = classifyRegime(bar.close, priceAtWindowStart, regimeThresholds);
+  const regime = classifyRegime(bar.close, priceAtWindowStart, config.regime);
 
   return {
     shortEma,

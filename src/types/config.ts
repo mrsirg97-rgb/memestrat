@@ -24,6 +24,8 @@ export interface RegimeThresholds {
   tUp: number;
   /** ROC < -T_down → DOWNTREND. */
   tDown: number;
+  /** Number of bars for the ROC window (default: 10). priceAtWindowStart = close windowBars bars ago. */
+  windowBars: number;
 }
 
 /** Z-score band thresholds. */
@@ -157,7 +159,7 @@ export interface StrategyConfig {
 export const DEFAULT_CONFIG: StrategyConfig = {
   bar: { intervalSeconds: 15 },
   ema: { short: 5, medium: 13, long: 34, veryLong: 55 },
-  regime: { tUp: 0.5, tDown: 0.5 },
+  regime: { tUp: 0.5, tDown: 0.5, windowBars: 10 },
   zscore: { overbought: 1.5, oversold: -1.5 },
   confirmation: {
     minLiquidityUsd: 10_000,
