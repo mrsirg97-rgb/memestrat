@@ -1,0 +1,82 @@
+name: ci
+
+# the gate from WORKFLOW.md: nothing lands on main unless this passes.
+# branch-protect main with the required status check named "ci" (the gate job below).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# a newer push to the same ref cancels the in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # stack is the agent's call (see TASK.md). detect it instead of pinning it,
+  # so this file needs no edit when the scaffold lands.
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.scan.outputs.rust }}
+      node: ${{ steps.scan.outputs.node }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: scan
+        shell: bash
+        run: |
+          rust=false; node=false
+          [ -f Cargo.toml ] && rust=true
+          [ -f package.json ] && node=true
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "node=$node" >> "$GITHUB_OUTPUT"
+          echo "detected -> rust=$rust node=$node"
+
+  rust:
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all --all-features
+
+  node:
+    needs: detect
+    if: needs.detect.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      # --if-present so an early scaffold without these scripts still goes green.
+      - run: npm run lint --if-present
+      - run: npm run typecheck --if-present
+      - run: npm test --if-present
+
+  # single required status check for branch protection.
+  # passes only if no job that actually ran failed (skipped jobs are fine).
+  ci:
+    needs: [detect, rust, node]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: gate
+        shell: bash
+        run: |
+          results='${{ needs.detect.result }} ${{ needs.rust.result }} ${{ needs.node.result }}'
+          echo "job results: $results"
+          for r in $results; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "ci gate: a required job failed"; exit 1
+            fi
+          done
+          echo "ci gate: ok"
