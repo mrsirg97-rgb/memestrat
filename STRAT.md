@@ -71,6 +71,9 @@ $$
 \end{align}
 $$
 
+fail closed: when `ESTD < epsilon` (flat pre-pump bars, warmup), z is undefined → signal
+degrades to `NOOP`. do not emit NaN or guess.
+
 thresholds:
 
 $$
@@ -88,17 +91,34 @@ $$
 
 ## regime
 
-classify off the **long-term slope**, normalized by ESTD so the bands mean the same thing
-across tokens of wildly different volatility (config thresholds `T_up`, `T_down`):
+classify off the **price rate-of-change** over the slope window, not the EMA slope.
+EMA slope is a lagging instrument — by the time it signals, the move is often half over.
+ROC is the faster regime proxy (see TASK.md: "consider a faster regime proxy").
 
 ```
-slope_norm = longTermSlope / longTermESTD
+roc = (price_now - price_at_window_start) / price_at_window_start
+
+guard: price_at_window_start < epsilon → RANGING (refuse to classify, don't divide)
 
 regime =
-  slope_norm >  T_up    -> UPTREND
-  slope_norm < -T_down  -> DOWNTREND
-  otherwise             -> RANGING
+  roc >  T_up    -> UPTREND
+  roc < -T_down  -> DOWNTREND
+  otherwise      -> RANGING
 ```
+
+The threshold `T_up` / `T_down` is a fraction (default 0.5 = 50% move over the window).
+The window length is configurable via `config.regime.windowBars` (default: 10 bars).
+A 50%+ move in 10 bars (2.5 min at 15s bars) = confirmed pump. A 50%+ drop = confirmed dump.
+
+**Contract:** `priceAtWindowStart` = the close price `config.regime.windowBars` bars ago.
+The caller is responsible for maintaining a price history buffer and looking back `windowBars` positions.
+
+**Why ROC, not ESTD-normalized slope?** ESTD-normalized regime detection assumes a stationary
+dispersion baseline — valid for established assets (the strategy's origin) but not for memecoins,
+where volatility is non-stationary and steps from ~0 to extreme in one bar. ROC is chosen for
+responsiveness: regime shifts here happen in a handful of bars and a trailing dispersion estimator
+lags the move. Tradeoff: ROC is noisier, so false regime flips are pushed onto the confirmation
+layer to filter.
 
 the regime is the master gate. it decides *whether* to look for an entry at all, and which
 entry model to use. this is the single most important change from a plain mean-reversion
@@ -121,6 +141,12 @@ fail any of these -> the signal degrades to `NOOP`. unconfirmed alpha is not alp
 
 ```
 func generate_signal(price, regime, shortZ, longZ, shortSlope, confirmed):
+
+  // Fail closed: undefined z (ESTD < epsilon) → NOOP
+  if regime == UPTREND and shortZ is undefined:
+    return NOOP
+  if regime == RANGING and (shortZ is undefined or longZ is undefined):
+    return NOOP
 
   // ---- DOWNTREND: the veto. no new risk in a dying coin. ----
   if regime == DOWNTREND:
@@ -165,22 +191,26 @@ bar, independent of `generate_signal`, and take priority over it.
 
 ```
 func manage_position(pos, price, regime):
+  // Update trailing stop first — it's stateful and always advances.
+  // Trail distance scales with current price, not entry price.
+  currentTrailDist = price * (pos.trailDist / pos.entry)
+  pos.trail = max(pos.trail, price - currentTrailDist)
+
   // 1. hard stop — fixed at entry, the max acceptable loss. never widened.
   if price <= pos.stop:
     return CLOSE("stop")
 
-  // 2. take-profit ladder — scale out, lock partial gains, let a runner run.
+  // 2. trailing stop — check after updating (can trigger on same bar as update).
+  if price <= pos.trail:
+    return CLOSE("trail")
+
+  // 3. take-profit ladder — scale out, lock partial gains, let a runner run.
   for level in pos.tp_ladder:
     if price >= level.target and not level.hit:
       return REDUCE(level.size, "tp")
 
-  // 3. trailing stop — arms once in profit; this is the trend's exit.
-  pos.trail = max(pos.trail, price - pos.trail_dist)
-  if price <= pos.trail:
-    return CLOSE("trail")
-
   // 4. time stop — a scalp that hasn't moved is decaying risk, not a position.
-  if pos.age_bars >= pos.max_age and price < pos.entry * pos.min_progress:
+  if pos.age_bars >= pos.max_age and price <= pos.entry * pos.min_progress:
     return CLOSE("time")
 
   // 5. regime flip — if the long-term trend rolls into DOWNTREND, get out.
@@ -214,9 +244,9 @@ func price_listener(symbol):
   for price, volume, flow in stream(symbol) until demoted:
     shortEMA, longEMA   = ema(short), ema(long)
     shortESTD, longESTD = estd(short), estd(long)
-    shortSlope, longSlope = slope(shortEMA), slope(longEMA)
+    shortSlope          = slope(shortEMA)     // used in UPTREND entry only
     shortZ, longZ       = z(price, shortEMA, shortESTD), z(price, longEMA, longESTD)
-    regime              = classify(longSlope, longESTD)
+    regime              = classifyRegime(price, priceAtWindowStart, thresholds)
     confirmed           = confirm(liquidity, volume, flow, slippage)
 
     if has_open_position(symbol):
