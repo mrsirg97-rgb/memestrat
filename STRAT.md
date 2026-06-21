@@ -88,17 +88,21 @@ $$
 
 ## regime
 
-classify off the **long-term slope**, normalized by ESTD so the bands mean the same thing
-across tokens of wildly different volatility (config thresholds `T_up`, `T_down`):
+classify off the **price rate-of-change** over the slope window, not the EMA slope.
+EMA slope is a lagging instrument — by the time it signals, the move is often half over.
+ROC is the faster regime proxy (see TASK.md: "consider a faster regime proxy").
 
 ```
-slope_norm = longTermSlope / longTermESTD
+roc = (price_now - price_at_window_start) / price_at_window_start
 
 regime =
-  slope_norm >  T_up    -> UPTREND
-  slope_norm < -T_down  -> DOWNTREND
-  otherwise             -> RANGING
+  roc >  T_up    -> UPTREND
+  roc < -T_down  -> DOWNTREND
+  otherwise      -> RANGING
 ```
+
+The threshold `T_up` / `T_down` is a fraction (default 0.5 = 50% move over the window).
+A 50%+ move in 10 bars (2.5 min at 15s bars) = confirmed pump. A 50%+ drop = confirmed dump.
 
 the regime is the master gate. it decides *whether* to look for an entry at all, and which
 entry model to use. this is the single most important change from a plain mean-reversion
@@ -165,22 +169,26 @@ bar, independent of `generate_signal`, and take priority over it.
 
 ```
 func manage_position(pos, price, regime):
+  // Update trailing stop first — it's stateful and always advances.
+  // Trail distance scales with current price, not entry price.
+  currentTrailDist = price * (pos.trailDist / pos.entry)
+  pos.trail = max(pos.trail, price - currentTrailDist)
+
   // 1. hard stop — fixed at entry, the max acceptable loss. never widened.
   if price <= pos.stop:
     return CLOSE("stop")
 
-  // 2. take-profit ladder — scale out, lock partial gains, let a runner run.
+  // 2. trailing stop — check after updating (can trigger on same bar as update).
+  if price <= pos.trail:
+    return CLOSE("trail")
+
+  // 3. take-profit ladder — scale out, lock partial gains, let a runner run.
   for level in pos.tp_ladder:
     if price >= level.target and not level.hit:
       return REDUCE(level.size, "tp")
 
-  // 3. trailing stop — arms once in profit; this is the trend's exit.
-  pos.trail = max(pos.trail, price - pos.trail_dist)
-  if price <= pos.trail:
-    return CLOSE("trail")
-
   // 4. time stop — a scalp that hasn't moved is decaying risk, not a position.
-  if pos.age_bars >= pos.max_age and price < pos.entry * pos.min_progress:
+  if pos.age_bars >= pos.max_age and price <= pos.entry * pos.min_progress:
     return CLOSE("time")
 
   // 5. regime flip — if the long-term trend rolls into DOWNTREND, get out.
