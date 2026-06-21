@@ -71,6 +71,9 @@ $$
 \end{align}
 $$
 
+fail closed: when `ESTD < epsilon` (flat pre-pump bars, warmup), z is undefined → signal
+degrades to `NOOP`. do not emit NaN or guess.
+
 thresholds:
 
 $$
@@ -94,6 +97,8 @@ ROC is the faster regime proxy (see TASK.md: "consider a faster regime proxy").
 
 ```
 roc = (price_now - price_at_window_start) / price_at_window_start
+
+guard: price_at_window_start < epsilon → RANGING (refuse to classify, don't divide)
 
 regime =
   roc >  T_up    -> UPTREND
@@ -132,6 +137,12 @@ fail any of these -> the signal degrades to `NOOP`. unconfirmed alpha is not alp
 
 ```
 func generate_signal(price, regime, shortZ, longZ, shortSlope, confirmed):
+
+  // Fail closed: undefined z (ESTD < epsilon) → NOOP
+  if regime == UPTREND and shortZ is undefined:
+    return NOOP
+  if regime == RANGING and (shortZ is undefined or longZ is undefined):
+    return NOOP
 
   // ---- DOWNTREND: the veto. no new risk in a dying coin. ----
   if regime == DOWNTREND:
