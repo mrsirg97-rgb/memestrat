@@ -29,14 +29,14 @@ export interface Indicators {
   shortSlope: number;
   /** Long-term slope (rate of change of long EMA). */
   longSlope: number;
-  /** Short-term z-score. */
-  shortZ: number;
-  /** Long-term z-score. */
-  longZ: number;
-  /** Short-term z-score band. */
-  shortBand: ZBand;
-  /** Long-term z-score band. */
-  longBand: ZBand;
+  /** Short-term z-score. Undefined when ESTD < epsilon (warmup / flat bars). */
+  shortZ: number | undefined;
+  /** Long-term z-score. Undefined when ESTD < epsilon (warmup / flat bars). */
+  longZ: number | undefined;
+  /** Short-term z-score band. Undefined when z is undefined. */
+  shortBand: ZBand | undefined;
+  /** Long-term z-score band. Undefined when z is undefined. */
+  longBand: ZBand | undefined;
   /** Normalized long-term slope (slope / ESTD). */
   slopeNorm: number;
   /** Current regime classification. */

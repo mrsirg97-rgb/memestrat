@@ -56,23 +56,33 @@ export function slope(currentEma: number, startEma: number, barCount: number): n
   return (currentEma - startEma) / barCount;
 }
 
+/** Minimum ESTD before z-score is considered defined. Below this, z is undefined → NOOP. */
+export const ZSCORE_EPSILON = 1e-9;
+
 /**
  * Compute z-score from price, EMA, and ESTD.
+ * @returns z-score, or `undefined` when ESTD < epsilon (warmup / flat bars — fail closed).
  */
-export function zScore(price: number, emaValue: number, estdValue: number): number {
-  if (estdValue === 0) return 0;
+export function zScore(price: number, emaValue: number, estdValue: number): number | undefined {
+  if (estdValue < ZSCORE_EPSILON) return undefined;
   return deviation(price, emaValue) / estdValue;
 }
 
 /**
  * Classify z-score into a band.
+ * @param z z-score value, or undefined (when ESTD < epsilon).
+ * @returns band classification; undefined z degrades to 'rich' (neutral — no signal).
  */
-export function classifyBand(z: number, thresholds: ZScoreThresholds): ZBand {
+export function classifyBand(z: number | undefined, thresholds: ZScoreThresholds): ZBand | undefined {
+  if (z === undefined) return undefined;
   if (z > thresholds.overbought) return 'overbought';
   if (z >= 0) return 'rich';
   if (z >= thresholds.oversold) return 'cheap';
   return 'oversold';
 }
+
+/** Minimum price at window start before ROC is considered valid. Below this, refuse to classify. */
+const ROC_EPSILON = 1e-9;
 
 /**
  * Classify regime from rate-of-change over the slope window.
@@ -85,7 +95,7 @@ export function classifyRegime(
   priceAtWindowStart: number | undefined,
   thresholds: RegimeThresholds,
 ): Regime {
-  if (priceAtWindowStart === undefined || priceAtWindowStart === 0) {
+  if (priceAtWindowStart === undefined || priceAtWindowStart <= ROC_EPSILON) {
     return 'RANGING';
   }
   const roc = (currentPrice - priceAtWindowStart) / priceAtWindowStart;
@@ -193,12 +203,13 @@ export function checkConfirmation(
 /**
  * Generate a signal from indicators and confirmation.
  * Implements the STRAT.md signal logic exactly.
+ * When z-scores are undefined (ESTD < epsilon), signal degrades to NOOP — fail closed.
  */
 export function generateSignal(
   price: number,
   regime: Regime,
-  shortZ: number,
-  longZ: number,
+  shortZ: number | undefined,
+  longZ: number | undefined,
   shortSlope: number,
   confirmed: boolean,
   rangingEnabled: boolean,
@@ -213,6 +224,10 @@ export function generateSignal(
     if (!rangingEnabled) {
       return 'NOOP';
     }
+    // Fail closed: undefined z → NOOP
+    if (shortZ === undefined || longZ === undefined) {
+      return 'NOOP';
+    }
     if (shortZ < -1.5 && longZ <= 0 && confirmed) {
       return 'BUY';
     }
@@ -224,6 +239,10 @@ export function generateSignal(
 
   // UPTREND: momentum — ride it, don't fade it
   if (regime === 'UPTREND') {
+    // Fail closed: undefined shortZ → NOOP
+    if (shortZ === undefined) {
+      return 'NOOP';
+    }
     // Enter on a confirmed continuation: shallow pullback toward short EMA that resumes upward
     if (shortZ <= 0 && shortSlope > 0 && confirmed) {
       return 'BUY';

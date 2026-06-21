@@ -18,11 +18,11 @@ export interface EmaWindows {
   veryLong: number;
 }
 
-/** Regime classification thresholds (normalized slope / ESTD). */
+/** Regime classification thresholds (price rate-of-change over the slope window). */
 export interface RegimeThresholds {
-  /** slope_norm > T_up → UPTREND. */
+  /** ROC > T_up → UPTREND. */
   tUp: number;
-  /** slope_norm < -T_down → DOWNTREND. */
+  /** ROC < -T_down → DOWNTREND. */
   tDown: number;
 }
 
