@@ -6,6 +6,11 @@ signals, manages risk, and proves itself in simulation before anything goes live
 work directly in this repo. use test driven design: for each feature, isolate it, write the
 test, make it pass, commit. one feature per commit, tests green before every commit.
 
+for each feature, keep a session log under `./sessions/` (i.e. `~/Projects/memestrat/sessions/`):
+`sessions-NNN.md`, starting at `sessions-001.md` and increasing monotonically — one file per
+feature, never reused. capture what you built, the key decisions and trade-offs, and the
+outcome (tests, branch, PR). terse, not academic — this is the audit trail of the build.
+
 read the companion docs first — they govern how this gets built:
   - `AGENTS.md` — the engineering habits and conventions to build by. read before writing code.
   - `STRAT.md` — the per-symbol signal + position logic to implement against.
