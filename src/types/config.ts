@@ -96,7 +96,7 @@ export interface DiscoveryConfig {
   ruggersBlocklist: string[];
 }
 
-/** Scoring weights for candidate ranking. */
+/** Scoring weights and reference levels for candidate ranking. */
 export interface ScoringConfig {
   /** Weight for liquidity score (0-1). */
   liquidityWeight: number;
@@ -108,6 +108,12 @@ export interface ScoringConfig {
   ageWeight: number;
   /** Minimum composite score to promote to watchlist. */
   minPromotionScore: number;
+  /** Reference liquidity for scoring normalization (USD). Full score at this level. */
+  scoringLiquidityRef: number;
+  /** Reference velocity for scoring normalization (txns/hour). Full score at this level. */
+  scoringVelocityRef: number;
+  /** Reference age for scoring normalization (seconds). Full score at this level. */
+  scoringAgeRef: number;
 }
 
 /** Simulation / backtest configuration. */
@@ -201,6 +207,9 @@ export const DEFAULT_CONFIG: StrategyConfig = {
     velocityWeight: 0.25,
     ageWeight: 0.2,
     minPromotionScore: 0.5,
+    scoringLiquidityRef: 50_000,
+    scoringVelocityRef: 100,
+    scoringAgeRef: 7200,
   },
   sim: {
     splitPoint: 0.8,

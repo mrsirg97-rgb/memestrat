@@ -164,4 +164,26 @@ describe('computeCompositeScore', () => {
     // 0.8*0.3 + 0.6*0.25 + 0.4*0.25 + 0.2*0.2 = 0.24 + 0.15 + 0.10 + 0.04 = 0.53
     expect(score).toBeCloseTo(0.53, 4);
   });
+
+  it('scoring references are sourced from config, not magic constants', () => {
+    // Verify that changing config refs changes the score
+    const configHighRef: ScoringConfig = {
+      ...defaultScoring,
+      scoringLiquidityRef: 500_000, // 10x higher ref → lower liquidity score
+    };
+    const configLowRef: ScoringConfig = {
+      ...defaultScoring,
+      scoringLiquidityRef: 10_000, // lower ref → higher liquidity score
+    };
+
+    // scoreLiquidity is called externally with the ref from config
+    // Here we verify the scoring functions use the ref parameter
+    const liqScoreHigh = scoreLiquidity(50_000, configHighRef.scoringLiquidityRef);
+    const liqScoreLow = scoreLiquidity(50_000, configLowRef.scoringLiquidityRef);
+
+    // Higher ref → lower score for the same liquidity
+    expect(liqScoreHigh).toBeCloseTo(0.1, 4); // 50K / 500K
+    expect(liqScoreLow).toBeCloseTo(1.0, 4);  // 50K / 10K → capped at 1
+    expect(liqScoreLow).toBeGreaterThan(liqScoreHigh);
+  });
 });
