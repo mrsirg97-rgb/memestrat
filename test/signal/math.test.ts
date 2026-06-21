@@ -291,36 +291,36 @@ describe('checkConfirmation', () => {
 
 describe('generateSignal', () => {
   it('returns NOOP in downtrend (hard veto)', () => {
-    expect(generateSignal(100, 'DOWNTREND', -2, -1, -0.5, true, false)).toBe('NOOP');
-    expect(generateSignal(100, 'DOWNTREND', -2, -1, -0.5, false, false)).toBe('NOOP');
+    expect(generateSignal(100, 'DOWNTREND', -2, -1, -0.5, true, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
+    expect(generateSignal(100, 'DOWNTREND', -2, -1, -0.5, false, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
   });
 
   it('returns NOOP in ranging when ranging is disabled', () => {
-    expect(generateSignal(100, 'RANGING', -2, -1, 0, true, false)).toBe('NOOP');
+    expect(generateSignal(100, 'RANGING', -2, -1, 0, true, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
   });
 
   it('returns BUY in ranging when oversold and confirmed (ranging enabled)', () => {
-    expect(generateSignal(100, 'RANGING', -2, -1, 0, true, true)).toBe('BUY');
+    expect(generateSignal(100, 'RANGING', -2, -1, 0, true, true, DEFAULT_CONFIG.zscore)).toBe('BUY');
   });
 
   it('returns SELL in ranging when overbought (ranging enabled)', () => {
-    expect(generateSignal(100, 'RANGING', 2, 1, 0, true, true)).toBe('SELL');
+    expect(generateSignal(100, 'RANGING', 2, 1, 0, true, true, DEFAULT_CONFIG.zscore)).toBe('SELL');
   });
 
   it('returns BUY in uptrend on pullback with positive slope and confirmed', () => {
-    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0.1, true, false)).toBe('BUY');
+    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0.1, true, false, DEFAULT_CONFIG.zscore)).toBe('BUY');
   });
 
   it('returns NOOP in uptrend when not on pullback', () => {
-    expect(generateSignal(100, 'UPTREND', 2, 1.5, 0.1, true, false)).toBe('NOOP');
+    expect(generateSignal(100, 'UPTREND', 2, 1.5, 0.1, true, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
   });
 
   it('returns NOOP in uptrend when unconfirmed', () => {
-    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0.1, false, false)).toBe('NOOP');
+    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0.1, false, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
   });
 
   it('does NOT sell on overbought in uptrend (trend working)', () => {
-    expect(generateSignal(100, 'UPTREND', 2, 1.5, 0.1, true, false)).toBe('NOOP');
+    expect(generateSignal(100, 'UPTREND', 2, 1.5, 0.1, true, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
   });
 });
 
@@ -335,7 +335,7 @@ describe('buildSignalResult', () => {
       DEFAULT_CONFIG,
     );
 
-    const result = buildSignalResult(bar, indicators, true, [], false);
+    const result = buildSignalResult(bar, indicators, true, [], false, DEFAULT_CONFIG.zscore);
 
     expect(result.signal).toBe('NOOP'); // first bar, ranging, disabled
     expect(result.confirmed).toBe(true);
@@ -407,9 +407,9 @@ describe('warmup period — insufficient bars', () => {
 
   it('generateSignal returns NOOP when z is undefined (warmup)', () => {
     // UPTREND regime but undefined z → fail closed
-    expect(generateSignal(100, 'UPTREND', undefined, undefined, 0.1, true, false)).toBe('NOOP');
+    expect(generateSignal(100, 'UPTREND', undefined, undefined, 0.1, true, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
     // RANGING regime with ranging enabled but undefined z → fail closed
-    expect(generateSignal(100, 'RANGING', undefined, undefined, 0.1, true, true)).toBe('NOOP');
+    expect(generateSignal(100, 'RANGING', undefined, undefined, 0.1, true, true, DEFAULT_CONFIG.zscore)).toBe('NOOP');
   });
 });
 
@@ -435,13 +435,13 @@ describe('ESTD-below-epsilon ⇒ NOOP', () => {
   });
 
   it('signal degrades to NOOP when shortZ undefined in UPTREND', () => {
-    const signal = generateSignal(100, 'UPTREND', undefined, 1.0, 0.5, true, false);
+    const signal = generateSignal(100, 'UPTREND', undefined, 1.0, 0.5, true, false, DEFAULT_CONFIG.zscore);
     expect(signal).toBe('NOOP');
   });
 
   it('signal degrades to NOOP when either z undefined in RANGING', () => {
-    expect(generateSignal(100, 'RANGING', undefined, -2.0, 0, true, true)).toBe('NOOP');
-    expect(generateSignal(100, 'RANGING', -2.0, undefined, 0, true, true)).toBe('NOOP');
+    expect(generateSignal(100, 'RANGING', undefined, -2.0, 0, true, true, DEFAULT_CONFIG.zscore)).toBe('NOOP');
+    expect(generateSignal(100, 'RANGING', -2.0, undefined, 0, true, true, DEFAULT_CONFIG.zscore)).toBe('NOOP');
   });
 });
 
@@ -519,7 +519,7 @@ describe('invariant: generateSignal always returns a valid Signal', () => {
     ['RANGING', -2, -1, 0, true, false],
   ])('(%s, shortZ=%s, longZ=%s, shortSlope=%s, confirmed=%s, ranging=%s) → valid signal',
     (regime, shortZ, longZ, shortSlope, confirmed, ranging) => {
-      const signal = generateSignal(100, regime, shortZ, longZ, shortSlope, confirmed, ranging);
+      const signal = generateSignal(100, regime, shortZ, longZ, shortSlope, confirmed, ranging, DEFAULT_CONFIG.zscore);
       expect(validSignals).toContain(signal);
     },
   );
@@ -534,7 +534,7 @@ describe('invariant: DOWNTREND always → NOOP regardless of z/slope', () => {
     [100, -100, 1000, true],
   ])('shortZ=%s, longZ=%s, shortSlope=%s, confirmed=%s → NOOP',
     (shortZ, longZ, shortSlope, confirmed) => {
-      expect(generateSignal(100, 'DOWNTREND', shortZ, longZ, shortSlope, confirmed, false)).toBe('NOOP');
+      expect(generateSignal(100, 'DOWNTREND', shortZ, longZ, shortSlope, confirmed, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
     },
   );
 });
@@ -624,20 +624,67 @@ describe('regime windowBars is sourced from config (FINDING 1)', () => {
 describe('invariant: UPTREND only fires BUY on pullback with positive slope', () => {
   it('BUY requires shortZ <= 0 AND shortSlope > 0 AND confirmed', () => {
     // All conditions met
-    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0.1, true, false)).toBe('BUY');
+    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0.1, true, false, DEFAULT_CONFIG.zscore)).toBe('BUY');
 
     // shortZ > 0 → NOOP
-    expect(generateSignal(100, 'UPTREND', 0.5, 0.5, 0.1, true, false)).toBe('NOOP');
+    expect(generateSignal(100, 'UPTREND', 0.5, 0.5, 0.1, true, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
 
     // shortSlope <= 0 → NOOP
-    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0, true, false)).toBe('NOOP');
-    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, -0.1, true, false)).toBe('NOOP');
+    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0, true, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
+    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, -0.1, true, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
 
     // unconfirmed → NOOP
-    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0.1, false, false)).toBe('NOOP');
+    expect(generateSignal(100, 'UPTREND', -0.5, 0.5, 0.1, false, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
   });
 
   it('does NOT sell on overbought in UPTREND (trend working)', () => {
-    expect(generateSignal(100, 'UPTREND', 3, 2, 0.1, true, false)).toBe('NOOP');
+    expect(generateSignal(100, 'UPTREND', 3, 2, 0.1, true, false, DEFAULT_CONFIG.zscore)).toBe('NOOP');
+  });
+});
+
+// ---- FINDING 2: z-score thresholds are config-driven, not hardcoded ----
+
+describe('generateSignal uses config z-score thresholds (not hardcoded ±1.5)', () => {
+  it('BUY in ranging respects custom oversold threshold', () => {
+    // With default thresholds (-1.5 oversold), z=-2 triggers BUY
+    expect(generateSignal(100, 'RANGING', -2, -1, 0, true, true, DEFAULT_CONFIG.zscore)).toBe('BUY');
+    // With a tighter oversold threshold (-2.5), z=-2 should NOT trigger BUY
+    const tightConfig = { overbought: 2.5, oversold: -2.5 };
+    expect(generateSignal(100, 'RANGING', -2, -1, 0, true, true, tightConfig)).toBe('NOOP');
+    // z=-3 with tight threshold SHOULD trigger BUY
+    expect(generateSignal(100, 'RANGING', -3, -1, 0, true, true, tightConfig)).toBe('BUY');
+  });
+
+  it('SELL in ranging respects custom overbought threshold', () => {
+    // With default thresholds (1.5 overbought), z=2 triggers SELL
+    expect(generateSignal(100, 'RANGING', 2, 1, 0, true, true, DEFAULT_CONFIG.zscore)).toBe('SELL');
+    // With a higher overbought threshold (2.5), z=2 should NOT trigger SELL
+    const highConfig = { overbought: 2.5, oversold: -2.5 };
+    expect(generateSignal(100, 'RANGING', 2, 1, 0, true, true, highConfig)).toBe('NOOP');
+    // z=3 with high threshold SHOULD trigger SELL
+    expect(generateSignal(100, 'RANGING', 3, 1, 0, true, true, highConfig)).toBe('SELL');
+  });
+
+  it('buildSignalResult threads zscore thresholds through to generateSignal', () => {
+    const bar = makeBar(100);
+    const indicators = computeIndicators(
+      bar,
+      undefined, undefined, undefined, undefined,
+      undefined, undefined,
+      undefined,
+      DEFAULT_CONFIG,
+    );
+    // Override z-scores to simulate overbought
+    indicators.shortZ = 2;
+    indicators.longZ = 1;
+    indicators.regime = 'RANGING';
+
+    // With default config (overbought=1.5), should SELL
+    const resultDefault = buildSignalResult(bar, indicators, true, [], true, DEFAULT_CONFIG.zscore);
+    expect(resultDefault.signal).toBe('SELL');
+
+    // With higher threshold (overbought=2.5), should NOT SELL
+    const resultHigh = buildSignalResult(bar, indicators, true, [], true, { overbought: 2.5, oversold: -2.5 });
+    expect(resultHigh.signal).toBe('NOOP');
   });
 });

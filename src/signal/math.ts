@@ -207,6 +207,7 @@ export function checkConfirmation(
  * Generate a signal from indicators and confirmation.
  * Implements the STRAT.md signal logic exactly.
  * When z-scores are undefined (ESTD < epsilon), signal degrades to NOOP — fail closed.
+ * Z-score thresholds (overbought/oversold) are sourced from config — not magic constants.
  */
 export function generateSignal(
   price: number,
@@ -216,6 +217,7 @@ export function generateSignal(
   shortSlope: number,
   confirmed: boolean,
   rangingEnabled: boolean,
+  zscoreThresholds: ZScoreThresholds,
 ): Signal {
   // DOWNTREND: hard veto on all longs
   if (regime === 'DOWNTREND') {
@@ -231,10 +233,10 @@ export function generateSignal(
     if (shortZ === undefined || longZ === undefined) {
       return 'NOOP';
     }
-    if (shortZ < -1.5 && longZ <= 0 && confirmed) {
+    if (shortZ < zscoreThresholds.oversold && longZ <= 0 && confirmed) {
       return 'BUY';
     }
-    if (shortZ > 1.5) {
+    if (shortZ > zscoreThresholds.overbought) {
       return 'SELL';
     }
     return 'NOOP';
@@ -266,6 +268,7 @@ export function buildSignalResult(
   confirmed: boolean,
   confirmationFailures: string[],
   rangingEnabled: boolean,
+  zscoreThresholds: ZScoreThresholds,
 ): SignalResult {
   const signal = generateSignal(
     bar.close,
@@ -275,6 +278,7 @@ export function buildSignalResult(
     indicators.shortSlope,
     confirmed,
     rangingEnabled,
+    zscoreThresholds,
   );
 
   return {
