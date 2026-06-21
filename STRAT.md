@@ -104,6 +104,13 @@ regime =
 The threshold `T_up` / `T_down` is a fraction (default 0.5 = 50% move over the window).
 A 50%+ move in 10 bars (2.5 min at 15s bars) = confirmed pump. A 50%+ drop = confirmed dump.
 
+**Why ROC, not ESTD-normalized slope?** ESTD-normalized regime detection assumes a stationary
+dispersion baseline — valid for established assets (the strategy's origin) but not for memecoins,
+where volatility is non-stationary and steps from ~0 to extreme in one bar. ROC is chosen for
+responsiveness: regime shifts here happen in a handful of bars and a trailing dispersion estimator
+lags the move. Tradeoff: ROC is noisier, so false regime flips are pushed onto the confirmation
+layer to filter.
+
 the regime is the master gate. it decides *whether* to look for an entry at all, and which
 entry model to use. this is the single most important change from a plain mean-reversion
 model: fading an oversold reading inside a DOWNTREND is how you catch a rug.
@@ -222,9 +229,9 @@ func price_listener(symbol):
   for price, volume, flow in stream(symbol) until demoted:
     shortEMA, longEMA   = ema(short), ema(long)
     shortESTD, longESTD = estd(short), estd(long)
-    shortSlope, longSlope = slope(shortEMA), slope(longEMA)
+    shortSlope          = slope(shortEMA)     // used in UPTREND entry only
     shortZ, longZ       = z(price, shortEMA, shortESTD), z(price, longEMA, longESTD)
-    regime              = classify(longSlope, longESTD)
+    regime              = classifyRegime(price, priceAtWindowStart, thresholds)
     confirmed           = confirm(liquidity, volume, flow, slippage)
 
     if has_open_position(symbol):
