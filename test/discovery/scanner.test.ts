@@ -1,7 +1,7 @@
 /** TokenScanner concrete — composes filters + scoring with TokenRepository dependency. */
 import { describe, it, expect } from 'vitest';
 import { InMemoryScanner } from '../../src/discovery/scanner.js';
-import type { TokenRepository, TokenScanner } from '../../src/interfaces/data.js';
+import type { TokenRepository } from '../../src/interfaces/data.js';
 import type { TokenInfo, HolderDistribution, SellabilityResult, LiquiditySnapshot, TokenCandidate } from '../../src/types/market.js';
 import type { StrategyConfig } from '../../src/types/config.js';
 import { DEFAULT_CONFIG } from '../../src/types/config.js';
