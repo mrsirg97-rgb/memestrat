@@ -61,8 +61,11 @@ export function managePosition(
   }
 
   // 3. Take-profit ladder — scale out, lock partial gains, let a runner run.
+  //    Only mark a level hit when it is actually reduced — prevents silently skipped
+  //    TP levels on single-bar gaps (price jumping past 2+ ladder levels).
   for (const level of pos.tpLadder) {
     if (price >= level.target && !level.hit) {
+      level.hit = true; // mark hit only on actual reduction
       return { type: 'REDUCE', sizeFrac: level.sizeFrac, reason: 'tp' };
     }
   }
@@ -81,17 +84,12 @@ export function managePosition(
 }
 
 /**
- * Advance position state by one bar (increment age, mark TP hits).
+ * Advance position state by one bar (increment age).
+ * TP levels are marked hit only when actually reduced in managePosition —
+ * this prevents silently skipped TP levels on single-bar gaps.
  */
-export function advancePosition(pos: Position, price: number): void {
+export function advancePosition(pos: Position, _price: number): void {
   pos.ageBars += 1;
-
-  // Mark TP levels as hit if price has passed them
-  for (const level of pos.tpLadder) {
-    if (price >= level.target) {
-      level.hit = true;
-    }
-  }
 }
 
 /**
