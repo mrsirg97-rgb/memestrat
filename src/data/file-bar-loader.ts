@@ -7,6 +7,10 @@
  * are preserved. The loader does NOT silently drop them. They are part of
  * an honest universe — the strategy's job is to handle them, not the loader's
  * job to hide them.
+ *
+ * SURVIVORSHIP PROTECTION: tokens that fail to load (parse errors, empty
+ * files, missing bars.jsonl) are reported in a skipped list, not silently
+ * dropped. A shrinking universe is never invisible.
  */
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -14,17 +18,42 @@ import type { Bar } from '../types/market.js';
 import type { BarData } from '../sim/replay-barstream.js';
 import type { FileBar } from './file-format.js';
 
+/** A token that was skipped during loading, with the reason why. */
+export interface SkippedToken {
+  /** Mint address (directory name). */
+  mint: string;
+  /** Human-readable reason for skipping. */
+  reason: string;
+}
+
+/** Result of loading bars from a data directory. */
+export interface LoadResult {
+  /** Bars successfully loaded, keyed by mint. */
+  data: BarData;
+  /** Tokens that were skipped, with reasons. */
+  skipped: SkippedToken[];
+}
+
 /**
  * Load all bars from a data directory into BarData for ReplayBarStream.
  *
- * Reads every `data/<mint>/bars.jsonl` file and returns a map of mint → bars.
+ * Reads every `data/<mint>/bars.jsonl` file and returns a LoadResult with
+ * loaded data and a list of skipped tokens with reasons.
+ *
  * Bars are sorted by timestamp ascending within each mint.
  *
+ * SURVIVORSHIP PROTECTION:
+ * - ENOENT (no bars.jsonl): skipped with reason "no bars file"
+ * - Empty file (0 bars after parse): skipped with reason "empty bars file"
+ * - Parse error (malformed JSON, missing fields): skipped with reason
+ *   "parse error: ..." — the ENTIRE token is skipped, not just the bad line
+ *
  * @param dataDir Path to the data directory containing per-token subdirectories.
- * @returns BarData map keyed by mint address.
+ * @returns LoadResult with loaded data and skipped tokens.
  */
-export async function loadBars(dataDir: string): Promise<BarData> {
+export async function loadBars(dataDir: string): Promise<LoadResult> {
   const data: BarData = {};
+  const skipped: SkippedToken[] = [];
 
   try {
     const entries = await fs.readdir(dataDir, { withFileTypes: true });
@@ -38,20 +67,33 @@ export async function loadBars(dataDir: string): Promise<BarData> {
         const content = await fs.readFile(barsPath, 'utf-8');
         const bars = parseJsonl(content);
 
-        if (bars.length > 0) {
-          // Sort by timestamp ascending for deterministic replay
-          bars.sort((a, b) => a.timestamp - b.timestamp);
-          data[mint] = bars;
+        if (bars.length === 0) {
+          // File exists but produced no bars — report it
+          skipped.push({ mint, reason: 'empty bars file' });
+          continue;
         }
-      } catch {
-        // Token has no bars file — skip (metadata-only tokens exist)
+
+        // Sort by timestamp ascending for deterministic replay
+        bars.sort((a, b) => a.timestamp - b.timestamp);
+        data[mint] = bars;
+      } catch (err: unknown) {
+        const isNotFound = (err as NodeJS.ErrnoException).code === 'ENOENT';
+
+        if (isNotFound) {
+          // No bars.jsonl — metadata-only tokens exist, skip cleanly
+          skipped.push({ mint, reason: 'no bars file' });
+        } else {
+          // Parse error — report the entire token as skipped
+          const reason = err instanceof Error ? err.message : String(err);
+          skipped.push({ mint, reason: `parse error: ${reason}` });
+        }
       }
     }
   } catch {
     // Data dir doesn't exist or isn't readable — return empty
   }
 
-  return data;
+  return { data, skipped };
 }
 
 /**

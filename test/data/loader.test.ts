@@ -118,10 +118,11 @@ describe('loadBars', () => {
     ];
     await writeBars(tmpDir, 'TOKEN_A', bars);
 
-    const data = await loadBars(tmpDir);
-    expect(Object.keys(data)).toContain('TOKEN_A');
-    expect(data['TOKEN_A']).toHaveLength(2);
-    expect(data['TOKEN_A'][0].close).toBe(1.05);
+    const result = await loadBars(tmpDir);
+    expect(Object.keys(result.data)).toContain('TOKEN_A');
+    expect(result.data['TOKEN_A']).toHaveLength(2);
+    expect(result.data['TOKEN_A'][0].close).toBe(1.05);
+    expect(result.skipped).toHaveLength(0);
   });
 
   it('sorts bars by timestamp ascending', async () => {
@@ -132,10 +133,10 @@ describe('loadBars', () => {
     ];
     await writeBars(tmpDir, 'TOKEN_A', bars);
 
-    const data = await loadBars(tmpDir);
-    expect(data['TOKEN_A'][0].timestamp).toBe(1000);
-    expect(data['TOKEN_A'][1].timestamp).toBe(2000);
-    expect(data['TOKEN_A'][2].timestamp).toBe(3000);
+    const result = await loadBars(tmpDir);
+    expect(result.data['TOKEN_A'][0].timestamp).toBe(1000);
+    expect(result.data['TOKEN_A'][1].timestamp).toBe(2000);
+    expect(result.data['TOKEN_A'][2].timestamp).toBe(3000);
   });
 
   it('does NOT drop rug bars', async () => {
@@ -147,10 +148,10 @@ describe('loadBars', () => {
     ];
     await writeBars(tmpDir, 'RUG_TOKEN', bars);
 
-    const data = await loadBars(tmpDir);
-    expect(data['RUG_TOKEN']).toHaveLength(3);
-    expect(data['RUG_TOKEN'][2].close).toBe(0.001);
-    expect(data['RUG_TOKEN'][2].volume).toBe(0);
+    const result = await loadBars(tmpDir);
+    expect(result.data['RUG_TOKEN']).toHaveLength(3);
+    expect(result.data['RUG_TOKEN'][2].close).toBe(0.001);
+    expect(result.data['RUG_TOKEN'][2].volume).toBe(0);
   });
 
   it('handles multiple tokens', async () => {
@@ -163,16 +164,16 @@ describe('loadBars', () => {
     await writeBars(tmpDir, 'TOKEN_A', barsA);
     await writeBars(tmpDir, 'TOKEN_B', barsB);
 
-    const data = await loadBars(tmpDir);
-    expect(Object.keys(data)).toContain('TOKEN_A');
-    expect(Object.keys(data)).toContain('TOKEN_B');
-    expect(data['TOKEN_A']).toHaveLength(1);
-    expect(data['TOKEN_B']).toHaveLength(1);
+    const result = await loadBars(tmpDir);
+    expect(Object.keys(result.data)).toContain('TOKEN_A');
+    expect(Object.keys(result.data)).toContain('TOKEN_B');
+    expect(result.data['TOKEN_A']).toHaveLength(1);
+    expect(result.data['TOKEN_B']).toHaveLength(1);
   });
 
   it('returns empty for non-existent directory', async () => {
-    const data = await loadBars(path.join(tmpDir, 'nonexistent'));
-    expect(Object.keys(data)).toHaveLength(0);
+    const result = await loadBars(path.join(tmpDir, 'nonexistent'));
+    expect(Object.keys(result.data)).toHaveLength(0);
   });
 
   it('skips tokens without bars.jsonl', async () => {
@@ -198,8 +199,12 @@ describe('loadBars', () => {
       estimatedFillTimeSeconds: 1,
     });
 
-    const data = await loadBars(tmpDir);
-    expect(Object.keys(data)).toHaveLength(0);
+    const result = await loadBars(tmpDir);
+    expect(Object.keys(result.data)).toHaveLength(0);
+    // META_ONLY should be in skipped list (no bars file)
+    const skipped = result.skipped.find((s) => s.mint === 'META_ONLY');
+    expect(skipped).toBeDefined();
+    expect(skipped!.reason).toContain('no bars');
   });
 });
 

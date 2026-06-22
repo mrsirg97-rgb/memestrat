@@ -68,7 +68,8 @@ async function main(): Promise<void> {
 
   // 1. Load bars from disk
   console.error(`Loading bars from ${resolvedDir}...`);
-  const barData = await loadBars(resolvedDir);
+  const loadResult = await loadBars(resolvedDir);
+  const barData = loadResult.data;
   const mints = Object.keys(barData);
 
   if (mints.length === 0) {
@@ -76,7 +77,15 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  console.error(`Loaded ${mints.length} token(s) with ${mints.reduce((sum, m) => sum + barData[m].length, 0)} total bars`);
+  const totalBars = mints.reduce((sum, m) => sum + barData[m].length, 0);
+  console.error(`Loaded ${mints.length} token(s) with ${totalBars} total bars`);
+
+  if (loadResult.skipped.length > 0) {
+    console.error(`Skipped ${loadResult.skipped.length} token(s):`);
+    for (const s of loadResult.skipped) {
+      console.error(`  - ${s.mint}: ${s.reason}`);
+    }
+  }
 
   // 2. Load token metadata and build repository
   const repository = new FileTokenRepository(resolvedDir);

@@ -149,7 +149,8 @@ describe('End-to-end backtest from file data', () => {
     await writeMeta(tmpDir, 'GOOD_TOKEN', makeGoodMeta('GOOD_TOKEN'));
 
     // Load data
-    const barData = await loadBars(tmpDir);
+    const loadResult = await loadBars(tmpDir);
+    const barData = loadResult.data;
     const repository = new FileTokenRepository(tmpDir);
     const mints = Object.keys(barData);
 
@@ -163,21 +164,21 @@ describe('End-to-end backtest from file data', () => {
     const stream = new ReplayBarStream(barData);
     const runner = new BacktestRunner(config, stream, scanner, 10_000);
 
-    const result = await runner.run();
+    const runResult = await runner.run();
 
     // Verify metric block is produced
-    expect(result.metrics.totalTrades).toBeGreaterThanOrEqual(0);
-    expect(result.metrics.expectancyR).toBeDefined();
-    expect(result.metrics.profitFactor).toBeDefined();
-    expect(result.metrics.maxDrawdownR).toBeGreaterThanOrEqual(0);
-    expect(result.metrics.tailLossFraction).toBeDefined();
-    expect(result.metrics.totalR).toBeDefined();
-    expect(result.metrics.totalPnlUsd).toBeDefined();
-    expect(result.metrics.winRate).toBeDefined();
-    expect(result.metrics.passed).toBeDefined();
+    expect(runResult.metrics.totalTrades).toBeGreaterThanOrEqual(0);
+    expect(runResult.metrics.expectancyR).toBeDefined();
+    expect(runResult.metrics.profitFactor).toBeDefined();
+    expect(runResult.metrics.maxDrawdownR).toBeGreaterThanOrEqual(0);
+    expect(runResult.metrics.tailLossFraction).toBeDefined();
+    expect(runResult.metrics.totalR).toBeDefined();
+    expect(runResult.metrics.totalPnlUsd).toBeDefined();
+    expect(runResult.metrics.winRate).toBeDefined();
+    expect(runResult.metrics.passed).toBeDefined();
 
     // Discovery stats
-    expect(result.discoveryStats.tokensScanned).toBeGreaterThanOrEqual(1);
+    expect(runResult.discoveryStats.tokensScanned).toBeGreaterThanOrEqual(1);
   });
 
   it('walk-forward split produces both in-sample and out-of-sample', async () => {
@@ -185,7 +186,8 @@ describe('End-to-end backtest from file data', () => {
     await writeBars(tmpDir, 'GOOD_TOKEN', goodBars);
     await writeMeta(tmpDir, 'GOOD_TOKEN', makeGoodMeta('GOOD_TOKEN'));
 
-    const barData = await loadBars(tmpDir);
+    const loadResult = await loadBars(tmpDir);
+    const barData = loadResult.data;
     const repository = new FileTokenRepository(tmpDir);
     const mints = Object.keys(barData);
 
@@ -200,12 +202,12 @@ describe('End-to-end backtest from file data', () => {
     const stream = new ReplayBarStream(barData);
     const runner = new BacktestRunner(config, stream, scanner, 10_000);
 
-    const result = await runner.runWalkForward();
+    const wfResult = await runner.runWalkForward();
 
-    expect(result.inSample).toBeDefined();
-    expect(result.outOfSample).toBeDefined();
-    expect(result.inSample.metrics.totalTrades).toBeGreaterThanOrEqual(0);
-    expect(result.outOfSample.metrics.totalTrades).toBeGreaterThanOrEqual(0);
+    expect(wfResult.inSample).toBeDefined();
+    expect(wfResult.outOfSample).toBeDefined();
+    expect(wfResult.inSample.metrics.totalTrades).toBeGreaterThanOrEqual(0);
+    expect(wfResult.outOfSample.metrics.totalTrades).toBeGreaterThanOrEqual(0);
   });
 
   it('rug token is in universe but filtered by discovery', async () => {
@@ -219,7 +221,8 @@ describe('End-to-end backtest from file data', () => {
     await writeBars(tmpDir, 'RUG_TOKEN', rugBars);
     await writeMeta(tmpDir, 'RUG_TOKEN', makeRugMeta('RUG_TOKEN'));
 
-    const barData = await loadBars(tmpDir);
+    const loadResult = await loadBars(tmpDir);
+    const barData = loadResult.data;
     const repository = new FileTokenRepository(tmpDir);
     const mints = Object.keys(barData);
 
@@ -237,12 +240,12 @@ describe('End-to-end backtest from file data', () => {
     const stream = new ReplayBarStream(barData);
     const runner = new BacktestRunner(config, stream, scanner, 10_000);
 
-    const result = await runner.run();
+    const runResult = await runner.run();
 
     // Both scanned, only good token promoted
-    expect(result.discoveryStats.tokensScanned).toBe(2);
-    expect(result.discoveryStats.tokensPromoted).toBeGreaterThanOrEqual(1);
-    expect(result.discoveryStats.tokensFiltered).toBeGreaterThanOrEqual(1);
+    expect(runResult.discoveryStats.tokensScanned).toBe(2);
+    expect(runResult.discoveryStats.tokensPromoted).toBeGreaterThanOrEqual(1);
+    expect(runResult.discoveryStats.tokensFiltered).toBeGreaterThanOrEqual(1);
 
     // Rug bars are NOT silently dropped — they exist in the stream
     expect(barData['RUG_TOKEN']).toHaveLength(40);
@@ -253,7 +256,8 @@ describe('End-to-end backtest from file data', () => {
     // Write a token with no bars (meta only)
     await writeMeta(tmpDir, 'META_ONLY', makeGoodMeta('META_ONLY'));
 
-    const barData = await loadBars(tmpDir);
+    const loadResult = await loadBars(tmpDir);
+    const barData = loadResult.data;
     const repository = new FileTokenRepository(tmpDir);
     const mints = Object.keys(barData);
 
@@ -262,10 +266,10 @@ describe('End-to-end backtest from file data', () => {
     const stream = new ReplayBarStream(barData);
     const runner = new BacktestRunner(config, stream, scanner, 10_000);
 
-    const result = await runner.run();
+    const runResult = await runner.run();
 
-    expect(result.metrics.totalTrades).toBe(0);
-    expect(result.metrics.expectancyR).toBe(0);
+    expect(runResult.metrics.totalTrades).toBe(0);
+    expect(runResult.metrics.expectancyR).toBe(0);
   });
 
   it('dead-on-arrival token preserved when price is zero from bar 1', async () => {
@@ -278,7 +282,8 @@ describe('End-to-end backtest from file data', () => {
     await writeBars(tmpDir, 'DEAD_TOKEN', deadBars);
     await writeMeta(tmpDir, 'DEAD_TOKEN', makeRugMeta('DEAD_TOKEN'));
 
-    const barData = await loadBars(tmpDir);
+    const loadResult = await loadBars(tmpDir);
+    const barData = loadResult.data;
 
     // Dead token bars are preserved
     expect(barData['DEAD_TOKEN']).toHaveLength(3);
@@ -316,20 +321,20 @@ describe('Determinism: same dataset → identical metrics', () => {
     };
 
     // Run 1
-    const barData1 = await loadBars(tmpDir);
+    const load1 = await loadBars(tmpDir);
     const repo1 = new FileTokenRepository(tmpDir);
-    const mints1 = Object.keys(barData1);
+    const mints1 = Object.keys(load1.data);
     const scanner1 = new InMemoryScanner(repo1, config, mints1);
-    const stream1 = new ReplayBarStream(barData1);
+    const stream1 = new ReplayBarStream(load1.data);
     const runner1 = new BacktestRunner(config, stream1, scanner1, 10_000);
     const result1 = await runner1.run();
 
     // Run 2 — fresh instances, same data
-    const barData2 = await loadBars(tmpDir);
+    const load2 = await loadBars(tmpDir);
     const repo2 = new FileTokenRepository(tmpDir);
-    const mints2 = Object.keys(barData2);
+    const mints2 = Object.keys(load2.data);
     const scanner2 = new InMemoryScanner(repo2, config, mints2);
-    const stream2 = new ReplayBarStream(barData2);
+    const stream2 = new ReplayBarStream(load2.data);
     const runner2 = new BacktestRunner(config, stream2, scanner2, 10_000);
     const result2 = await runner2.run();
 
@@ -358,18 +363,18 @@ describe('Determinism: same dataset → identical metrics', () => {
     };
 
     // Run 1
-    const barData1 = await loadBars(tmpDir);
+    const load1 = await loadBars(tmpDir);
     const repo1 = new FileTokenRepository(tmpDir);
-    const scanner1 = new InMemoryScanner(repo1, config, Object.keys(barData1));
-    const stream1 = new ReplayBarStream(barData1);
+    const scanner1 = new InMemoryScanner(repo1, config, Object.keys(load1.data));
+    const stream1 = new ReplayBarStream(load1.data);
     const runner1 = new BacktestRunner(config, stream1, scanner1, 10_000);
     const wf1 = await runner1.runWalkForward();
 
     // Run 2
-    const barData2 = await loadBars(tmpDir);
+    const load2 = await loadBars(tmpDir);
     const repo2 = new FileTokenRepository(tmpDir);
-    const scanner2 = new InMemoryScanner(repo2, config, Object.keys(barData2));
-    const stream2 = new ReplayBarStream(barData2);
+    const scanner2 = new InMemoryScanner(repo2, config, Object.keys(load2.data));
+    const stream2 = new ReplayBarStream(load2.data);
     const runner2 = new BacktestRunner(config, stream2, scanner2, 10_000);
     const wf2 = await runner2.runWalkForward();
 
