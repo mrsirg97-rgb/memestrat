@@ -20,7 +20,7 @@ import type { BarData } from './replay-barstream.js';
 import { SimExecutionEngine } from './sim-execution.js';
 import { computeMetrics, type ExposureData } from './metrics.js';
 import { computeIndicators, checkConfirmation, buildSignalResult } from '../signal/math.js';
-import { createPosition, managePosition, advancePosition, calculateSize, buildTradeOutcome } from '../signal/position.js';
+import { createPosition, managePosition, advancePosition, calculateSize, buildTradeOutcomeFromAccumulated } from '../signal/position.js';
 import { ReplayBarStream } from './replay-barstream.js';
 
 /** Discovery statistics from the run. */
@@ -65,6 +65,25 @@ export interface WalkForwardResult {
 }
 
 /**
+ * Position tracking for partial-exit accounting.
+ * One position = one trade. Partial exits accrue PnL; final close emits ONE TradeOutcome.
+ */
+interface PositionTracking {
+  /** Initial size at entry (S0). */
+  initialSize: number;
+  /** Risk amount at entry: (entry - stop) * S0 / entry. */
+  riskAmount: number;
+  /** Accumulated PnL in USD across all partial exits. */
+  pnlUsd: number;
+  /** Sum of (exitPrice * exitSize) for weighted-average exit price. */
+  weightedExitSum: number;
+  /** Sum of exit sizes for weighted-average exit price. */
+  exitSizeSum: number;
+  /** Entry timestamp. */
+  entryTimestamp: number;
+}
+
+/**
  * Walk-forward backtest runner.
  *
  * Usage:
@@ -101,7 +120,13 @@ export class BacktestRunner {
       maxAggregateExposurePct: 0,
     };
 
-    // Replay discovery: scan the full token universe
+    // One position = one trade: track initial size, risk, and accumulated PnL
+    const positionTracking = new Map<string, PositionTracking>();
+
+    // Static universe filter — scan once upfront.
+    // TODO: point-in-time discovery deferred to data-layer feature.
+    // Currently uses fixed token values; a proper PIT scan would replay
+    // the token universe at each bar timestamp.
     const promotedTokens = new Set<string>();
     for await (const candidate of this.scanner.scan()) {
       this.discoveryStats.tokensScanned += 1;
@@ -115,7 +140,7 @@ export class BacktestRunner {
 
     if (promotedTokens.size === 0) {
       return {
-        metrics: computeMetrics([], this.bankroll, this.config.risk, maxExposureData),
+        metrics: computeMetrics([], this.bankroll, this.config.risk, maxExposureData, this.config.sizing),
         discoveryStats: { ...this.discoveryStats },
         tradeLog,
       };
@@ -230,9 +255,11 @@ export class BacktestRunner {
         );
 
         // Exits first — manage existing position
+        // One position = one trade: partial exits accrue PnL, final close emits ONE TradeOutcome
         const pos = positions.get(mint);
         if (pos) {
           const action = managePosition(pos, bar.close, indicators.regime);
+          const tracking = positionTracking.get(mint)!;
 
           if (action.type === 'CLOSE') {
             const fillPrice = await engine.sell(
@@ -243,12 +270,23 @@ export class BacktestRunner {
             );
 
             if (fillPrice !== null) {
-              const outcome = buildTradeOutcome(pos, fillPrice, action.reason, now);
+              // Accrue final PnL and emit ONE TradeOutcome for the whole position
+              tracking.pnlUsd += (fillPrice - pos.entry) * pos.size / pos.entry;
+              tracking.weightedExitSum += fillPrice * pos.size;
+              tracking.exitSizeSum += pos.size;
+
+              const avgExitPrice = tracking.weightedExitSum / tracking.exitSizeSum;
+              const netR = tracking.pnlUsd / tracking.riskAmount;
+              const outcome = buildTradeOutcomeFromAccumulated(
+                mint, pos.entry, avgExitPrice, action.reason, now,
+                tracking.entryTimestamp, tracking.pnlUsd, netR, tracking.riskAmount,
+              );
               tradeLog.push(outcome);
               engine.clearPosition(mint);
             }
 
             positions.delete(mint);
+            positionTracking.delete(mint);
           } else if (action.type === 'REDUCE') {
             const reduceSize = pos.size * action.sizeFrac;
             const fillPrice = await engine.sell(
@@ -259,8 +297,10 @@ export class BacktestRunner {
             );
 
             if (fillPrice !== null) {
-              const outcome = buildTradeOutcome(pos, fillPrice, action.reason, now);
-              tradeLog.push(outcome);
+              // Accrue PnL for this partial exit — do NOT emit TradeOutcome yet
+              tracking.pnlUsd += (fillPrice - pos.entry) * reduceSize / pos.entry;
+              tracking.weightedExitSum += fillPrice * reduceSize;
+              tracking.exitSizeSum += reduceSize;
               pos.size -= reduceSize;
             }
           } else {
@@ -271,42 +311,47 @@ export class BacktestRunner {
 
         // Entries — act on signal
         if (signalResult.signal === 'BUY' && !positions.has(mint)) {
-          const entryFill = await engine.buy(
-            mint,
-            0, // placeholder — calculate size below
-            this.config.confirmation.maxSlippageBps,
+          // Use current price from engine (already ticked with this bar)
+          const entryPrice = await engine.getPrice(mint);
+          const stop = entryPrice * (1 - this.config.exit.hardStopPct);
+          const size = calculateSize(
+            this.bankroll,
+            entryPrice,
+            stop,
+            engine.getLiquidity(mint),
+            this.config.sizing,
           );
 
-          if (entryFill !== null) {
-            const stop = entryFill * (1 - this.config.exit.hardStopPct);
-            const size = calculateSize(
-              this.bankroll,
-              entryFill,
-              stop,
-              engine.getLiquidity(mint),
-              this.config.sizing,
-            );
+          if (size > 0) {
+            const actualEntry = await engine.buy(mint, size, this.config.confirmation.maxSlippageBps);
+            if (actualEntry !== null) {
+              const position = createPosition(
+                mint,
+                actualEntry,
+                size,
+                this.config.exit,
+                now,
+              );
+              positions.set(mint, position);
+              engine.recordPosition(mint, actualEntry, size, position.stop);
 
-            if (size > 0) {
-              const actualEntry = await engine.buy(mint, size, this.config.confirmation.maxSlippageBps);
-              if (actualEntry !== null) {
-                const position = createPosition(
-                  mint,
-                  actualEntry,
-                  size,
-                  this.config.exit,
-                  now,
-                );
-                positions.set(mint, position);
-                engine.recordPosition(mint, actualEntry, size, position.stop);
+              // Record initial size and risk for one-position-one-trade accounting
+              const riskAmount = (actualEntry - position.stop) * size / actualEntry;
+              positionTracking.set(mint, {
+                initialSize: size,
+                riskAmount,
+                pnlUsd: 0,
+                weightedExitSum: 0,
+                exitSizeSum: 0,
+                entryTimestamp: now,
+              });
 
-                // Track exposure
-                const singleExposure = (size / this.bankroll) * 100;
-                maxExposureData.maxSingleNameExposurePct = Math.max(
-                  maxExposureData.maxSingleNameExposurePct,
-                  singleExposure,
-                );
-              }
+              // Track exposure
+              const singleExposure = (size / this.bankroll) * 100;
+              maxExposureData.maxSingleNameExposurePct = Math.max(
+                maxExposureData.maxSingleNameExposurePct,
+                singleExposure,
+              );
             }
           }
         }
@@ -325,8 +370,9 @@ export class BacktestRunner {
 
     // Force-close any remaining positions at end of data
     for (const [mint, pos] of positions) {
-      const lastBar = await this.stream.getHistoricalBars(mint, 0, Number.MAX_SAFE_INTEGER, 1);
-      if (lastBar.length > 0) {
+      const allBars = await this.stream.getHistoricalBars(mint, 0, Number.MAX_SAFE_INTEGER);
+      if (allBars.length > 0) {
+        const lastBar = allBars[allBars.length - 1]; // last bar, not first
         const fillPrice = await engine.sell(
           mint,
           pos.size,
@@ -334,13 +380,23 @@ export class BacktestRunner {
           { entryPrice: pos.entry, stopPrice: pos.stop },
         );
         if (fillPrice !== null) {
-          const outcome = buildTradeOutcome(pos, fillPrice, 'end_of_data', lastBar[0].timestamp);
+          const tracking = positionTracking.get(mint)!;
+          tracking.pnlUsd += (fillPrice - pos.entry) * pos.size / pos.entry;
+          tracking.weightedExitSum += fillPrice * pos.size;
+          tracking.exitSizeSum += pos.size;
+
+          const avgExitPrice = tracking.weightedExitSum / tracking.exitSizeSum;
+          const netR = tracking.pnlUsd / tracking.riskAmount;
+          const outcome = buildTradeOutcomeFromAccumulated(
+            mint, pos.entry, avgExitPrice, 'end_of_data', lastBar.timestamp,
+            tracking.entryTimestamp, tracking.pnlUsd, netR, tracking.riskAmount,
+          );
           tradeLog.push(outcome);
         }
       }
     }
 
-    const metrics = computeMetrics(tradeLog, this.bankroll, this.config.risk, maxExposureData);
+    const metrics = computeMetrics(tradeLog, this.bankroll, this.config.risk, maxExposureData, this.config.sizing);
 
     return {
       metrics,
@@ -387,7 +443,7 @@ export class BacktestRunner {
 
     // In-sample run (0 → splitTs)
     const inSampleStream = this.makeSubsetStream(0, splitTs);
-    const inSampleScanner = this.scanner; // scanner uses full universe
+    const inSampleScanner = this.scanner; // TODO: shares full-universe scanner — in-sample sees future tokens
     const inSampleRunner = new BacktestRunner(this.config, inSampleStream, inSampleScanner, this.bankroll);
     const inSample = await inSampleRunner.run();
 
@@ -398,7 +454,7 @@ export class BacktestRunner {
       oosData[mint] = await this.stream.getHistoricalBars(mint, splitTs, Number.MAX_SAFE_INTEGER);
     }
     const oosStream = new ReplayBarStream(oosData);
-    const oosScanner = this.scanner;
+    const oosScanner = this.scanner; // TODO: shares full-universe scanner — see above
     const oosRunner = new BacktestRunner(this.config, oosStream, oosScanner, this.bankroll);
     const outOfSample = await oosRunner.run();
 
@@ -437,6 +493,6 @@ export class BacktestRunner {
     return computeMetrics([], this.bankroll, this.config.risk, {
       maxSingleNameExposurePct: 0,
       maxAggregateExposurePct: 0,
-    });
+    }, this.config.sizing);
   }
 }

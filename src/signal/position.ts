@@ -164,3 +164,32 @@ export function buildTradeOutcome(
     closed: true,
   };
 }
+
+/**
+ * Build a trade outcome with pre-computed PnL values.
+ * Used when partial exits have already accrued PnL across multiple fills.
+ */
+export function buildTradeOutcomeFromAccumulated(
+  mint: string,
+  entry: number,
+  exitPrice: number,
+  exitReason: string,
+  exitTimestamp: number,
+  entryTimestamp: number,
+  netPnlUsd: number,
+  netR: number,
+  riskAmount: number,
+): TradeOutcome {
+  return {
+    mint,
+    entry,
+    exitPrice,
+    exitReason,
+    pnlR: netR,
+    riskAmount,
+    pnlUsd: netPnlUsd,
+    entryTimestamp,
+    exitTimestamp,
+    closed: true,
+  };
+}
