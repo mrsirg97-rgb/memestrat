@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { computeMetrics } from '../../src/sim/metrics.js';
 import type { TradeOutcome } from '../../src/types/signal.js';
-import type { RiskConfig } from '../../src/types/config.js';
+import type { RiskConfig, SizingConfig } from '../../src/types/config.js';
 
 function makeOutcome(pnlR: number, entryTimestamp: number, exitTimestamp: number): TradeOutcome {
   return {
@@ -24,6 +24,12 @@ const defaultRiskConfig: RiskConfig = {
   maxAggregateExposurePct: 0.25,
 };
 
+const defaultSizingConfig: SizingConfig = {
+  perTradeRiskPct: 0.015,
+  maxPoolFrac: 0.02,
+  maxConcurrentPositions: 5,
+};
+
 describe('computeMetrics', () => {
   it('computes positive expectancy for winning book', () => {
     const outcomes: TradeOutcome[] = [
@@ -37,7 +43,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.03,
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
 
     expect(metrics.expectancyR).toBeGreaterThan(0);
     expect(metrics.totalTrades).toBe(5);
@@ -55,7 +61,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.02,
       maxAggregateExposurePct: 0.1,
-    });
+    }, defaultSizingConfig);
 
     expect(metrics.expectancyR).toBeLessThan(0);
     expect(metrics.passed).toBe(false);
@@ -76,7 +82,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.03,
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
 
     expect(metrics.maxDrawdownR).toBeCloseTo(3, 1);
   });
@@ -93,7 +99,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.03,
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
 
     // 2 out of 5 trades are worse than -1R
     expect(metrics.tailLossFraction).toBeCloseTo(0.4, 2);
@@ -111,7 +117,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.03,
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
 
     expect(metrics.winRate).toBe(0.5);
   });
@@ -125,7 +131,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.03,
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
 
     expect(metrics.passed).toBe(false);
     expect(metrics.failedTargets).toContain('maxDrawdownR');
@@ -142,7 +148,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.03,
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
 
     expect(metrics.tailLossFraction).toBe(1.0);
     expect(metrics.passed).toBe(false);
@@ -158,7 +164,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.06, // exceeds 5% cap
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
 
     expect(metrics.passed).toBe(false);
     expect(metrics.failedTargets).toContain('maxSingleNameExposurePct');
@@ -168,7 +174,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics([], 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0,
       maxAggregateExposurePct: 0,
-    });
+    }, defaultSizingConfig);
 
     expect(metrics.totalTrades).toBe(0);
     expect(metrics.expectancyR).toBe(0);
@@ -188,7 +194,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.03,
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
 
     expect(metrics.riskAdjustedReturn).toBeGreaterThan(0);
   });
@@ -207,7 +213,7 @@ describe('computeMetrics', () => {
     const metrics = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.03,
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
 
     expect(metrics.profitFactor).toBeCloseTo(2.5, 2);
   });
@@ -222,11 +228,11 @@ describe('computeMetrics', () => {
     const a = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.03,
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
     const b = computeMetrics(outcomes, 1000, defaultRiskConfig, {
       maxSingleNameExposurePct: 0.03,
       maxAggregateExposurePct: 0.15,
-    });
+    }, defaultSizingConfig);
 
     expect(JSON.stringify(a)).toEqual(JSON.stringify(b));
   });

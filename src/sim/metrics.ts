@@ -9,7 +9,7 @@
  * Win rate is a derived diagnostic — reported but never optimized.
  */
 import type { TradeOutcome, PerformanceMetrics } from '../types/signal.js';
-import type { RiskConfig } from '../types/config.js';
+import type { RiskConfig, SizingConfig } from '../types/config.js';
 
 /** Exposure tracking data from the backtest run. */
 export interface ExposureData {
@@ -57,6 +57,7 @@ export function computeMetrics(
   bankroll: number,
   _riskConfig: RiskConfig,
   exposure: ExposureData,
+  sizing: SizingConfig,
   targets: PerformanceTargets = DEFAULT_TARGETS,
 ): PerformanceMetrics {
   if (outcomes.length === 0) {
@@ -79,10 +80,13 @@ export function computeMetrics(
 
   // Max drawdown in R (peak-to-trough of cumulative R series)
   const { maxDrawdownR } = computeMaxDrawdown(outcomes);
-  const maxDrawdownPct = (maxDrawdownR * bankroll * 0.015) / bankroll * 100; // assuming 1.5% per-trade risk
+  const maxDrawdownPct = (maxDrawdownR * sizing.perTradeRiskPct) * 100; // drawdownR × risk-per-trade = % of bankroll
 
   // Risk-adjusted return: total R captured / max drawdown R
-  const riskAdjustedReturn = maxDrawdownR === 0 ? 0 : totalR / maxDrawdownR;
+  // Edge: flawless run (zero drawdown, positive R) → Infinity (pass)
+  const riskAdjustedReturn = maxDrawdownR === 0
+    ? totalR > 0 ? Infinity : 0
+    : totalR / maxDrawdownR;
 
   // Tail loss: fraction of trades worse than -1R
   const tailLosses = outcomes.filter((o) => o.pnlR < -1);
