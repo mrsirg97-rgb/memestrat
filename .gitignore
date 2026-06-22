@@ -3,3 +3,6 @@ dist/
 .env
 *.tsbuildinfo
 sessions
+data/
+test-data/
+.hermes/
