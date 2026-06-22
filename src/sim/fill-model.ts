@@ -168,15 +168,24 @@ export function computeFillResult(params: FullFillParams): FillResult {
   const { fillPrice, slippageBps } = fillPriceResult;
   const totalTaxBps = computeFeeTax(params.simConfig);
 
+  // Apply fee/MEV tax to fill price: buys pay more, sells receive less
+  const tax = totalTaxBps / 10_000;
+  let adjustedFillPrice: number;
+  if (params.direction === 'buy') {
+    adjustedFillPrice = fillPrice * (1 + tax);
+  } else {
+    adjustedFillPrice = fillPrice * (1 - tax);
+  }
+
   // Gap-through: only relevant for sells (exits) where fill is below stop
   let isGapThrough = false;
-  let finalFillPrice = fillPrice;
+  let finalFillPrice = adjustedFillPrice;
 
-  if (params.direction === 'sell' && fillPrice <= params.stopPrice) {
+  if (params.direction === 'sell' && adjustedFillPrice <= params.stopPrice) {
     const gapPrice = computeGapThrough(params.entryPrice, params.stopPrice, params.fillConfig, params.seed);
     if (gapPrice !== null) {
       isGapThrough = true;
-      finalFillPrice = gapPrice;
+      finalFillPrice = gapPrice; // gap-through overrides fee-adjusted price
     }
   }
 
