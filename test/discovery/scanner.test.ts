@@ -44,7 +44,7 @@ class FakeTokenRepository implements TokenRepository {
   }
 }
 
-const makeGoodToken = (mint: string): TokenInfo => ({
+const makeGoodToken = (mint: string, createdAt?: number): TokenInfo => ({
   mint,
   symbol: 'GOOD',
   name: 'Good Token',
@@ -54,7 +54,7 @@ const makeGoodToken = (mint: string): TokenInfo => ({
   lpBurnedOrLocked: true,
   poolLiquidityUsd: 50_000,
   deployer: 'goodDeployer',
-  createdAt: Date.now() - 7200_000, // 2 hours ago
+  createdAt: createdAt ?? Date.now() - 7200_000, // 2 hours ago
 });
 
 const makeGoodHolders = (): HolderDistribution => ({
@@ -269,6 +269,46 @@ describe('InMemoryScanner', () => {
       const candidate = await scanner.scanToken(mint);
       expect(candidate.passed).toBe(false);
       expect(candidate.failures.length).toBeGreaterThan(0);
+    });
+
+    it('deterministic: same injected clock produces same score', async () => {
+      const mint = 'detMint';
+      const fixedNow = 1_000_000_000_000; // epoch ms
+      const createdAt = fixedNow - 7200_000; // 2 hours before fixedNow
+      const repo = new FakeTokenRepository(
+        new Map([[mint, makeGoodToken(mint, createdAt)]]),
+        new Map([[mint, makeGoodHolders()]]),
+        new Map([[mint, makeGoodSellability()]]),
+        new Map([[mint, makeGoodLiquidity()]]),
+      );
+      const scanner = new InMemoryScanner(repo, makeConfig());
+
+      // Run scanToken twice with the same fixed clock
+      const candidate1 = await scanner.scanToken(mint, fixedNow);
+      const candidate2 = await scanner.scanToken(mint, fixedNow);
+
+      // Same input → same score (deterministic, no Date.now() leak)
+      expect(candidate1.score).toBeCloseTo(candidate2.score, 6);
+      expect(candidate1.score).toBeGreaterThan(0);
+    });
+
+    it('different injected clock changes age-dependent score', async () => {
+      const mint = 'ageMint';
+      const createdAt = 1_000_000_000_000;
+      const repo = new FakeTokenRepository(
+        new Map([[mint, makeGoodToken(mint, createdAt)]]),
+        new Map([[mint, makeGoodHolders()]]),
+        new Map([[mint, makeGoodSellability()]]),
+        new Map([[mint, makeGoodLiquidity()]]),
+      );
+      const scanner = new InMemoryScanner(repo, makeConfig());
+
+      // Token just created (age = 0) → lower age score
+      const fresh = await scanner.scanToken(mint, createdAt);
+      // Token 2 hours old (age = 7200s) → higher age score
+      const aged = await scanner.scanToken(mint, createdAt + 7200_000);
+
+      expect(aged.score).toBeGreaterThan(fresh.score);
     });
   });
 

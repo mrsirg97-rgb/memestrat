@@ -39,13 +39,17 @@ export interface TokenScanner {
   /**
    * Stream newly discovered token candidates. Returns an async iterator
    * that yields candidates as they are discovered.
+   * @param now Current timestamp (epoch ms) for deterministic scoring.
+   *   Backtests must inject the bar timestamp here; live mode may omit it.
    */
-  scan(): AsyncIterable<TokenCandidate>;
+  scan(now?: number): AsyncIterable<TokenCandidate>;
 
   /**
    * Force a scan of a specific token (for testing/ad-hoc use).
+   * @param mint Token mint address to scan.
+   * @param now Current timestamp (epoch ms) for deterministic scoring.
    */
-  scanToken(mint: string): Promise<TokenCandidate>;
+  scanToken(mint: string, now?: number): Promise<TokenCandidate>;
 }
 
 /** Execution layer — simulates or places real orders. */
