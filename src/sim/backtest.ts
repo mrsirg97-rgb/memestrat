@@ -210,8 +210,9 @@ export class BacktestRunner {
         state.shortEstd = indicators.shortEstd;
         state.longEstd = indicators.longEstd;
 
-        // Rolling slope start EMA: reset after window bars
-        if (state.priceHistory.length === this.config.regime.windowBars + 1) {
+        // Rolling slope start EMA: set once when window is full, never reset
+        if (state.priceHistory.length === this.config.regime.windowBars + 1
+            && state.shortSlopeStartEma === undefined) {
           state.shortSlopeStartEma = indicators.shortEma;
           state.longSlopeStartEma = indicators.longEma;
         }

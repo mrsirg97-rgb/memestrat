@@ -116,23 +116,26 @@ describe('FIX: partial exits produce one blended TradeOutcome', () => {
       },
     });
 
-    // Price series: pump → pullback (triggers entry) → recovery through all TP levels
+    // Price series: strong uptrend → pullback (BUY trigger) → recovery through TP levels
+    // Uptrend steep enough that 5-bar ROC stays positive during pullback → regime stays UPTREND
+    // Pullback sharp enough to push price below short EMA → shortZ <= 0 → BUY signal
     const bars: Bar[] = [];
     const tsStart = 1_000_000_000_000;
 
-    // Phase 1: strong pump (bars 0-15) to establish UPTREND regime
-    for (let i = 0; i < 16; i++) {
-      bars.push(makeBar(tsStart + i * 15_000, 1.0 + i * 0.02, 1000, 100));
+    // Phase 1: strong uptrend (bars 0-24) — 1.5% per bar, establishes UPTREND regime
+    for (let i = 0; i < 25; i++) {
+      bars.push(makeBar(tsStart + i * 15_000, 1.0 + i * 0.015, 1000, 100));
     }
 
-    // Phase 2: pullback (bars 16-25) — price drops below EMA to trigger shortZ <= 0 entry
-    for (let i = 0; i < 10; i++) {
-      bars.push(makeBar(tsStart + (16 + i) * 15_000, 1.32 - i * 0.015, 1000, 50));
-    }
+    // Phase 2: pullback (bars 25-26) — price drops below short EMA but 5-bar ROC stays positive
+    // Bar 24 price = 1.36, bar 20 price = 1.30 → ROC at bar 26 still > 0.1% threshold
+    bars.push(makeBar(tsStart + 25 * 15_000, 1.34, 1000, 100)); // dip below short EMA
+    bars.push(makeBar(tsStart + 26 * 15_000, 1.33, 1000, 100)); // further dip, shortZ < 0
 
-    // Phase 3: steady recovery through TP levels (bars 26-60)
-    for (let i = 0; i < 35; i++) {
-      bars.push(makeBar(tsStart + (26 + i) * 15_000, 1.17 + i * 0.005, 1000, 100));
+    // Phase 3: immediate recovery through TP levels (bars 27-70)
+    // Recovery starts above the pullback low with steep enough moves to keep 5-bar ROC positive
+    for (let i = 0; i < 44; i++) {
+      bars.push(makeBar(tsStart + (27 + i) * 15_000, 1.345 + i * 0.012, 1000, 100));
     }
 
     const barData: BarData = { 'TOKEN_A': bars };
