@@ -350,6 +350,37 @@ describe('InMemoryScanner', () => {
 
       expect(aged.score).toBeGreaterThan(fresh.score);
     });
+
+    it('scoring references from config affect the score', async () => {
+      const mint = 'configMint';
+      const fixedNow = 1_000_000_000_000;
+      const createdAt = fixedNow - 7200_000;
+      const repo = new FakeTokenRepository(
+        new Map([[mint, makeGoodToken(mint, createdAt)]]),
+        new Map([[mint, makeGoodHolders()]]),
+        new Map([[mint, makeGoodSellability()]]),
+        new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 20]]),
+      );
+
+      // Default config
+      const configDefault = makeConfig();
+      const scannerDefault = new InMemoryScanner(repo, configDefault);
+      const scoreDefault = (await scannerDefault.scanToken(mint, fixedNow)).score;
+
+      // Higher liquidity ref → lower liquidity score → lower composite
+      const configHighRef: StrategyConfig = {
+        ...configDefault,
+        scoring: {
+          ...configDefault.scoring,
+          scoringLiquidityRef: 500_000, // 10x higher
+        },
+      };
+      const scannerHighRef = new InMemoryScanner(repo, configHighRef);
+      const scoreHighRef = (await scannerHighRef.scanToken(mint, fixedNow)).score;
+
+      expect(scoreHighRef).toBeLessThan(scoreDefault);
+    });
   });
 
   describe('scan', () => {

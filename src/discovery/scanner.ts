@@ -11,15 +11,6 @@ import {
   scoreAge,
 } from './scoring.js';
 
-/** Reference liquidity level for scoring normalization (USD). */
-const SCORING_LIQUIDITY_REF = 50_000;
-
-/** Reference velocity for scoring normalization (txns/hour). */
-const SCORING_VELOCITY_REF = 100;
-
-/** Reference age for scoring normalization (seconds — 2 hours). */
-const SCORING_AGE_REF = 7200;
-
 /**
  * In-memory scanner that depends on TokenRepository for data.
  * Implements TokenScanner interface — swappable at composition root.
@@ -78,6 +69,12 @@ export class InMemoryScanner implements TokenScanner {
   /**
    * Force a scan of a specific token.
    * Fetches all data from repository, runs filters, computes score.
+   *
+   * TODO (live data-layer): Run cheap metadata filters first (liquidity,
+   * authorities, LP burned, blocklist — all in TokenInfo) and short-circuit
+   * BEFORE fetching holder distribution and sellability (expensive RPC calls).
+   * Currently all data is fetched eagerly. See PR #3 review FINDING 3.
+   *
    * @param mint Token mint address to scan.
    * @param now Current timestamp (epoch ms) for deterministic age computation.
    *   Defaults to Date.now() when not provided (live mode).
@@ -129,18 +126,19 @@ export class InMemoryScanner implements TokenScanner {
    */
   private computeScore(token: TokenInfo, holders: HolderDistribution, txnVelocity: number, now: number): number {
     const ageSeconds = (now - token.createdAt) / 1000;
+    const scoring = this.config.scoring;
 
-    const liquidityScore = scoreLiquidity(token.poolLiquidityUsd, SCORING_LIQUIDITY_REF);
+    const liquidityScore = scoreLiquidity(token.poolLiquidityUsd, scoring.scoringLiquidityRef);
     const holderScore = scoreHolderDistribution(holders);
-    const velocityScore = scoreVelocity(txnVelocity, SCORING_VELOCITY_REF);
-    const ageScore = scoreAge(ageSeconds, SCORING_AGE_REF);
+    const velocityScore = scoreVelocity(txnVelocity, scoring.scoringVelocityRef);
+    const ageScore = scoreAge(ageSeconds, scoring.scoringAgeRef);
 
     return computeCompositeScore(
       liquidityScore,
       holderScore,
       velocityScore,
       ageScore,
-      this.config.scoring,
+      scoring,
     );
   }
 
