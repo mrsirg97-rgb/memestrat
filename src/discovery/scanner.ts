@@ -104,9 +104,8 @@ export class InMemoryScanner implements TokenScanner {
     // Check sellability (use a default size for discovery — actual sizing happens at entry)
     const sellability = await this.repository.checkSellability(mint, 100);
 
-    // Estimate txn velocity from token creation time
-    // In a live implementation, this would come from recent bar data or RPC
-    const txnVelocity = this.estimateTxnVelocity(token, currentTime);
+    // Get real transaction velocity from repository
+    const txnVelocity = await this.repository.getTxnVelocity(mint);
 
     // Run all survivorship filters
     const { passed, failures } = runAllFilters(token, holders, txnVelocity, sellability, this.config.discovery);
@@ -143,22 +142,6 @@ export class InMemoryScanner implements TokenScanner {
       ageScore,
       this.config.scoring,
     );
-  }
-
-  /**
-   * Estimate transaction velocity from token metadata.
-   * In a live implementation, this would query recent block data.
-   * For the in-memory scanner, we derive a rough estimate from token age.
-   */
-  private estimateTxnVelocity(token: TokenInfo, now: number): number {
-    const ageSeconds = (now - token.createdAt) / 1000;
-    if (ageSeconds === 0) return 0;
-
-    // Rough heuristic: newer tokens with more liquidity tend to have higher velocity
-    // This is a placeholder — live implementation will use actual txn data from RPC
-    const liquidityFactor = Math.min(token.poolLiquidityUsd / SCORING_LIQUIDITY_REF, 2);
-    const ageFactor = Math.max(1 - ageSeconds / (24 * 3600), 0.1); // decay over 24 hours
-    return Math.round(liquidityFactor * 50 * ageFactor);
   }
 
   private emptyToken(mint: string): TokenInfo {

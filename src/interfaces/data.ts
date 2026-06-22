@@ -14,6 +14,9 @@ export interface TokenRepository {
 
   /** Get current liquidity snapshot. */
   getLiquidity(mint: string): Promise<LiquiditySnapshot>;
+
+  /** Get transaction velocity (txns per hour) for a token. */
+  getTxnVelocity(mint: string): Promise<number>;
 }
 
 /** Streaming access to bar data (real-time or replayed). */

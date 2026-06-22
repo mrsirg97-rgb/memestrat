@@ -12,6 +12,7 @@ class FakeTokenRepository implements TokenRepository {
     private holders: Map<string, HolderDistribution>,
     private sellability: Map<string, SellabilityResult>,
     private liquidity: Map<string, LiquiditySnapshot>,
+    private txnVelocity: Map<string, number>,
   ) {}
 
   getToken(mint: string): Promise<TokenInfo | null> {
@@ -41,6 +42,10 @@ class FakeTokenRepository implements TokenRepository {
       liquidityUsd: 0,
       timestamp: Date.now(),
     });
+  }
+
+  getTxnVelocity(mint: string): Promise<number> {
+    return Promise.resolve(this.txnVelocity.get(mint) ?? 0);
   }
 }
 
@@ -83,9 +88,23 @@ const makeConfig = (): StrategyConfig => ({
   },
 });
 
+/**
+ * Build a fully-populated fake repo for a "good" token.
+ * All filters pass, all data present.
+ */
+function makeGoodRepo(mint: string, createdAt?: number): FakeTokenRepository {
+  return new FakeTokenRepository(
+    new Map([[mint, makeGoodToken(mint, createdAt)]]),
+    new Map([[mint, makeGoodHolders()]]),
+    new Map([[mint, makeGoodSellability()]]),
+    new Map([[mint, makeGoodLiquidity()]]),
+    new Map([[mint, 20]]), // 20 txns/hr — above 10 min
+  );
+}
+
 describe('InMemoryScanner', () => {
   it('implements TokenScanner interface', () => {
-    const repo = new FakeTokenRepository(new Map(), new Map(), new Map(), new Map());
+    const repo = new FakeTokenRepository(new Map(), new Map(), new Map(), new Map(), new Map());
     const scanner = new InMemoryScanner(repo, makeConfig());
     expect(scanner.scan).toBeDefined();
     expect(scanner.scanToken).toBeDefined();
@@ -94,13 +113,7 @@ describe('InMemoryScanner', () => {
   describe('scanToken', () => {
     it('returns passed candidate when all filters clear', async () => {
       const mint = 'goodMint';
-      const token = makeGoodToken(mint);
-      const repo = new FakeTokenRepository(
-        new Map([[mint, token]]),
-        new Map([[mint, makeGoodHolders()]]),
-        new Map([[mint, makeGoodSellability()]]),
-        new Map([[mint, makeGoodLiquidity()]]),
-      );
+      const repo = makeGoodRepo(mint);
       const scanner = new InMemoryScanner(repo, makeConfig());
 
       const candidate = await scanner.scanToken(mint);
@@ -118,6 +131,7 @@ describe('InMemoryScanner', () => {
         new Map([[mint, makeGoodHolders()]]),
         new Map([[mint, makeGoodSellability()]]),
         new Map([[mint, { liquidityUsd: 1_000, timestamp: Date.now() }]]),
+        new Map([[mint, 20]]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
@@ -134,6 +148,7 @@ describe('InMemoryScanner', () => {
         new Map([[mint, makeGoodHolders()]]),
         new Map([[mint, makeGoodSellability()]]),
         new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 20]]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
@@ -150,6 +165,7 @@ describe('InMemoryScanner', () => {
         new Map([[mint, makeGoodHolders()]]),
         new Map([[mint, makeGoodSellability()]]),
         new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 20]]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
@@ -166,6 +182,7 @@ describe('InMemoryScanner', () => {
         new Map([[mint, makeGoodHolders()]]),
         new Map([[mint, makeGoodSellability()]]),
         new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 20]]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
@@ -182,6 +199,7 @@ describe('InMemoryScanner', () => {
         new Map([[mint, makeGoodHolders()]]),
         new Map([[mint, { sellable: false, estimatedSlippageBps: 9999, estimatedFillTimeSeconds: 0, reason: 'honeypot' }]]),
         new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 20]]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
@@ -199,6 +217,7 @@ describe('InMemoryScanner', () => {
         new Map([[mint, holders]]),
         new Map([[mint, makeGoodSellability()]]),
         new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 20]]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
@@ -216,6 +235,7 @@ describe('InMemoryScanner', () => {
         new Map([[mint, holders]]),
         new Map([[mint, makeGoodSellability()]]),
         new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 20]]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
@@ -232,12 +252,13 @@ describe('InMemoryScanner', () => {
         new Map([[mint, makeGoodHolders()]]),
         new Map([[mint, makeGoodSellability()]]),
         new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 5]]), // below 10 min velocity
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
       const candidate = await scanner.scanToken(mint);
-      expect(candidate).toBeDefined();
-      expect(candidate.txnVelocity).toBeDefined();
+      expect(candidate.passed).toBe(false);
+      expect(candidate.failures.some((f: string) => f.includes('velocity'))).toBe(true);
     });
 
     it('returns failed candidate when deployer is on blocklist', async () => {
@@ -248,6 +269,7 @@ describe('InMemoryScanner', () => {
         new Map([[mint, makeGoodHolders()]]),
         new Map([[mint, makeGoodSellability()]]),
         new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 20]]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
@@ -263,12 +285,28 @@ describe('InMemoryScanner', () => {
         new Map(),
         new Map(),
         new Map(),
+        new Map(),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
       const candidate = await scanner.scanToken(mint);
       expect(candidate.passed).toBe(false);
       expect(candidate.failures.length).toBeGreaterThan(0);
+    });
+
+    it('uses velocity from repository, not synthesized', async () => {
+      const mint = 'velMint';
+      const repo = new FakeTokenRepository(
+        new Map([[mint, makeGoodToken(mint)]]),
+        new Map([[mint, makeGoodHolders()]]),
+        new Map([[mint, makeGoodSellability()]]),
+        new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 42]]), // exact velocity from repo
+      );
+      const scanner = new InMemoryScanner(repo, makeConfig());
+
+      const candidate = await scanner.scanToken(mint);
+      expect(candidate.txnVelocity).toBe(42);
     });
 
     it('deterministic: same injected clock produces same score', async () => {
@@ -280,6 +318,7 @@ describe('InMemoryScanner', () => {
         new Map([[mint, makeGoodHolders()]]),
         new Map([[mint, makeGoodSellability()]]),
         new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 20]]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
@@ -300,6 +339,7 @@ describe('InMemoryScanner', () => {
         new Map([[mint, makeGoodHolders()]]),
         new Map([[mint, makeGoodSellability()]]),
         new Map([[mint, makeGoodLiquidity()]]),
+        new Map([[mint, 20]]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig());
 
@@ -332,6 +372,10 @@ describe('InMemoryScanner', () => {
         new Map([
           [mint1, makeGoodLiquidity()],
           [mint2, makeGoodLiquidity()],
+        ]),
+        new Map([
+          [mint1, 20],
+          [mint2, 20],
         ]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig(), [mint1, mint2]);
@@ -366,6 +410,10 @@ describe('InMemoryScanner', () => {
         new Map([
           [mint1, { liquidityUsd: 100_000, timestamp: Date.now() }],
           [mint2, { liquidityUsd: 20_000, timestamp: Date.now() }],
+        ]),
+        new Map([
+          [mint1, 20],
+          [mint2, 20],
         ]),
       );
       const scanner = new InMemoryScanner(repo, makeConfig(), [mint1, mint2]);
